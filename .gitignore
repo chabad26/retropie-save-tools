@@ -1,0 +1,39 @@
+# Gros dossiers locaux / backups RetroPie
+/retropie-carbon-final-20260618-000038/
+/overlays_retropie/
+
+# Manuels : on garde uniquement les scripts
+/Manuels/*
+!/Manuels/scripts/
+!/Manuels/scripts/**
+
+# Rapports, CSV, PDF, backups, caches
+*.pdf
+*.csv
+*.bak*
+*.backup*
+__pycache__/
+*.pyc
+moisson-state.json
+
+# Système / fichiers temporaires
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*~
+
+# ROMs / BIOS / contenus protégés
+roms/
+ROMs/
+bios/
+BIOS/
+*.iso
+*.chd
+*.cue
+*.bin
+*.rom
+*.zip
+*.7z
+*.rar
