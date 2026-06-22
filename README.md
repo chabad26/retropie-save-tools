@@ -7,11 +7,13 @@ Ce dépôt contient principalement :
 * des scripts de gestion de manuels PDF pour RetroPie ;
 * une moissonneuse de manuels depuis Archive.org ;
 * un système d’ouverture de manuel en jeu avec une touche de manette ;
-* des scripts de déploiement pour consoles personnalisées dans RetroPie ;
+* un sélecteur de profils Switch pour Eden ;
+* une intégration Xenia Canary directe pour Xbox 360 ;
+* des scripts de déploiement pour consoles personnalisées ;
 * des scripts de génération de raccourcis et de marquees ;
 * une organisation pensée pour survivre à une réinstallation propre.
 
-> Ce dépôt ne contient pas de ROMs, BIOS, jeux, manuels PDF téléchargés, fichiers protégés ou sauvegardes personnelles.
+> Ce dépôt ne contient pas de ROMs, BIOS, jeux, manuels PDF téléchargés, fichiers de licence, clés, firmwares, profils, sauvegardes personnelles ou contenus protégés.
 > Il fournit uniquement des scripts et de la documentation.
 
 ---
@@ -26,51 +28,8 @@ Le but est de centraliser les scripts utiles à une configuration RetroPie perso
 4. rechercher des manuels PDF de jeux ;
 5. mettre à jour les `gamelist.xml` pour associer les manuels aux jeux ;
 6. ouvrir les manuels en jeu via un bouton de manette ;
-7. faciliter la restauration après formatage ou changement de machine.
-
----
-
-## État actuel du projet
-
-Fonctionnalités principales :
-
-* scan des `gamelist.xml` ;
-* nettoyage des noms de jeux ;
-* recherche automatique de manuels PDF ;
-* téléchargement de manuels ;
-* reprise après interruption ;
-* rejet de faux positifs courants ;
-* gestion partielle des jeux multi-disques ;
-* mise à jour automatique des balises `<manual>` ;
-* ouverture du manuel courant en jeu via L3 ;
-* affichage d’un message lisible si aucun manuel n’est disponible ;
-* intégration Xenia Canary directe depuis RetroPie.
-
----
-
-## Avertissement légal
-
-Ce projet ne fournit aucun contenu protégé.
-
-Les scripts peuvent aider à rechercher des manuels disponibles publiquement sur Internet. Chaque utilisateur est responsable :
-
-* de respecter les droits d’auteur ;
-* de ne pas redistribuer de fichiers protégés ;
-* de vérifier les conditions d’utilisation des sites consultés ;
-* de ne publier que du code et de la documentation.
-
-Ne publiez pas dans ce dépôt :
-
-* ROMs ;
-* BIOS ;
-* ISOs ;
-* fichiers CHD ;
-* fichiers RVZ ;
-* fichiers XCI / NSP ;
-* fichiers PKG / RAP ;
-* manuels PDF téléchargés ;
-* sauvegardes personnelles ;
-* données de profil d’émulateur.
+7. gérer des profils séparés pour certains émulateurs ;
+8. faciliter la restauration après formatage ou changement de machine.
 
 ---
 
@@ -87,12 +46,14 @@ Dossier de travail : /home/retropie/Documents/save_retropie
 
 Système :
 
-* Ubuntu ;
-* RetroPie ;
-* EmulationStation ;
-* Python 3 ;
-* X11 ;
-* manette PowerA NSW wired controller.
+```text
+Ubuntu
+RetroPie
+EmulationStation
+Python 3
+X11
+Manette PowerA NSW wired controller
+```
 
 ---
 
@@ -105,7 +66,7 @@ sudo apt update
 sudo apt install -y git python3 rsync
 ```
 
-### Dépendances pour les manuels
+### Dépendances manuels et interface
 
 ```bash
 sudo apt install -y python3-evdev xpdf yad x11-utils wmctrl xdotool poppler-utils
@@ -116,18 +77,16 @@ Rôle des paquets :
 ```text
 python3-evdev : lecture des boutons de manette
 xpdf          : affichage des PDF en plein écran
-yad           : message lisible "Aucun manuel disponible"
+yad           : menus et messages lisibles sur TV
 x11-utils     : outils X11 utiles
-wmctrl        : gestion des fenêtres
-xdotool       : activation de fenêtres
-poppler-utils : outils de diagnostic PDF comme pdfinfo
+wmctrl        : gestion de fenêtres
+xdotool       : simulation de touches pour menus à la manette
+poppler-utils : diagnostic PDF avec pdfinfo
 ```
 
 ---
 
 ## Arborescence recommandée
-
-Arborescence locale utilisée :
 
 ```text
 /home/retropie/Documents/save_retropie/
@@ -144,34 +103,27 @@ Arborescence locale utilisée :
 │   │   ├── scan-gamelists-manuels.py
 │   │   ├── set-current-manual.py
 │   │   └── update-gamelists-manuals-from-pdfs.py
-│   │
 │   ├── pdf/
-│   │   └── non versionné
-│   │
 │   ├── rapports/
-│   │   └── non versionné
-│   │
 │   └── backups/
-│       └── non versionné
+│
+├── switch_profiles/
+│   ├── _common/
+│   ├── lucas/
+│   ├── oliv/
+│   ├── nolan/
+│   └── oceane/
 │
 └── script déployement PS3, xbox, xbox360 SWITCH/
     ├── scripts/
     └── backups/
 ```
 
-Les dossiers suivants ne doivent pas être versionnés :
-
-```text
-Manuels/pdf/
-Manuels/rapports/
-Manuels/backups/
-overlays_retropie/
-retropie-carbon-final-*/
-```
+Les dossiers `pdf`, `rapports`, `backups`, `switch_profiles`, ROMs, BIOS, saves et profils ne doivent pas être versionnés.
 
 ---
 
-## Fichier `.gitignore` conseillé
+## `.gitignore` conseillé
 
 ```gitignore
 # Gros dossiers locaux / backups RetroPie
@@ -198,6 +150,14 @@ moisson-state.json
 # Manuels téléchargés
 *.pdf
 
+# Profils, saves et fichiers privés
+switch_profiles/
+saves_xenia/
+*.keys
+prod.keys
+title.keys
+*.pem
+
 # ROMs / BIOS / contenus protégés
 roms/
 ROMs/
@@ -212,6 +172,7 @@ BIOS/
 *.wbfs
 *.xci
 *.nsp
+*.nro
 *.pkg
 *.rap
 *.zip
@@ -229,6 +190,8 @@ Thumbs.db
 
 ---
 
+# Partie 1 : manuels RetroPie
+
 ## Organisation des manuels
 
 Le dossier réel des manuels est :
@@ -244,14 +207,6 @@ ln -s /home/retropie/Documents/save_retropie/Manuels/pdf \
       /home/retropie/RetroPie/manuals
 ```
 
-Ainsi, EmulationStation continue de lire :
-
-```text
-/home/retropie/RetroPie/manuals
-```
-
-mais les fichiers sont réellement stockés dans le dossier de sauvegarde.
-
 Vérification :
 
 ```bash
@@ -266,15 +221,12 @@ Résultat attendu :
 
 ---
 
-## Ordre d’exécution recommandé pour les manuels
+## Ordre d’exécution recommandé
 
 ### 1. Scanner les gamelists
 
-Ce script lit les `gamelist.xml` existants et génère une liste brute des jeux.
-
 ```bash
 cd /home/retropie/Documents/save_retropie/Manuels
-
 scripts/scan-gamelists-manuels.py
 ```
 
@@ -288,13 +240,6 @@ liste-jeux-pour-manuels.csv
 
 ### 2. Nettoyer les noms de jeux
 
-Ce script nettoie les noms issus des ROMs ou des gamelists :
-
-* suppression des régions ;
-* suppression des tags `[!]`, `[f1]`, etc. ;
-* suppression des versions inutiles ;
-* génération d’un nom de recherche propre.
-
 ```bash
 scripts/prepare-recherche-manuels.py
 ```
@@ -305,17 +250,9 @@ Résultat attendu :
 liste-jeux-pour-manuels-clean.csv
 ```
 
-Les CSV peuvent être rangés dans :
-
-```text
-/home/retropie/Documents/save_retropie/Manuels/rapports
-```
-
 ---
 
 ### 3. Tester la recherche de manuels
-
-La moissonneuse cherche des manuels sur Archive.org sans télécharger en mode dry-run.
 
 ```bash
 scripts/moissonner-manuels-archive-v2-cute.py snes --limit 20 --debug
@@ -338,8 +275,6 @@ Options utiles :
 ---
 
 ### 4. Télécharger pour une console
-
-Une fois le test validé :
 
 ```bash
 scripts/moissonner-manuels-archive-v2-cute.py snes --download --sleep 8
@@ -369,7 +304,7 @@ Archive.org peut bloquer temporairement si trop de fichiers sont téléchargés 
 
 ## Reprise et arrêt propre
 
-La version `cute` peut sauvegarder sa progression.
+La version `cute` sauvegarde sa progression.
 
 En cas de `Ctrl+C`, le script :
 
@@ -389,15 +324,13 @@ Pour reprendre :
 scripts/moissonner-manuels-archive-v2-cute.py snes --resume --download --sleep 8
 ```
 
-Ou simplement relancer le script : il proposera de reprendre ou de recommencer.
-
 ---
 
 ## Gestion des jeux multi-disques
 
 La moissonneuse nettoie les noms de jeux multi-disques.
 
-Exemples :
+Exemple :
 
 ```text
 Shenmue (Disc 1)
@@ -413,30 +346,24 @@ Shenmue
 
 Le manuel trouvé est alors lié aux différents disques du même jeu.
 
-Objectif :
-
-```text
-Shenmue (Disc 1) -> Shenmue.pdf
-Shenmue (Disc 2) -> Shenmue.pdf
-Shenmue (Disc 3) -> Shenmue.pdf
-```
-
 ---
 
 ## Filtrage des faux positifs
 
 La moissonneuse essaye d’éviter certains pièges :
 
-* guides au lieu de manuels ;
-* magazines ;
-* romans ;
-* comics ;
-* PDFDrive ;
-* fichiers `OPS` ;
-* manuels coréens quand on cherche FR/EN ;
-* manuels portugais/brésiliens quand ils ne correspondent pas au besoin.
+```text
+guides au lieu de manuels
+magazines
+romans
+comics
+PDFDrive
+fichiers OPS
+manuels coréens si recherche FR/EN
+manuels portugais/brésiliens non souhaités
+```
 
-Exemple de cas rejetés :
+Exemples de rejets :
 
 ```text
 Sonic_The_Hedgehog_2_1992_Kr.pdf
@@ -457,37 +384,28 @@ Quand un manuel est téléchargé, le script peut ajouter une balise :
 <manual>/home/retropie/RetroPie/manuals/snes/Nom du jeu.pdf</manual>
 ```
 
-dans le fichier :
+dans :
 
 ```text
 /home/retropie/.emulationstation/gamelists/<system>/gamelist.xml
 ```
 
-Une sauvegarde du fichier `gamelist.xml` est créée avant modification.
-
 ---
 
 ## Réparer les gamelists depuis les PDF existants
 
-Si des PDF existent déjà mais que les gamelists ne contiennent pas les balises `<manual>`, utiliser :
+Si des PDF existent déjà mais que les gamelists ne contiennent pas encore les balises `<manual>` :
 
 ```bash
 cd /home/retropie/Documents/save_retropie/Manuels
-
 scripts/update-gamelists-manuals-from-pdfs.py
 ```
 
-Ce script cherche les PDF présents dans :
-
-```text
-/home/retropie/RetroPie/manuals/<system>/
-```
-
-et ajoute les balises `<manual>` correspondantes dans les gamelists.
-
 ---
 
-## Ouverture des manuels en jeu avec une manette
+# Partie 2 : ouverture des manuels en jeu
+
+## Principe
 
 Le système repose sur trois scripts :
 
@@ -497,7 +415,7 @@ manual-hotkey-watcher.py   : écoute un bouton de manette
 open-current-manual.sh     : ouvre le PDF ou affiche un message
 ```
 
-Principe :
+Flux :
 
 ```text
 1. Un jeu se lance.
@@ -511,14 +429,18 @@ Principe :
 
 ## Détection du bouton de manette
 
-Avec la manette PowerA NSW wired controller, `evtest` a montré :
+Avec la manette PowerA NSW wired controller :
 
 ```text
 L3 = BTN_SELECT
 R3 = BTN_START
 ```
 
-On utilise donc L3 en appui long.
+Le choix retenu est donc :
+
+```text
+Appui long sur L3
+```
 
 Chemin stable utilisé :
 
@@ -526,7 +448,7 @@ Chemin stable utilisé :
 /dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick
 ```
 
-Vérifier les périphériques disponibles :
+Vérifier :
 
 ```bash
 ls -l /dev/input/by-id/
@@ -557,7 +479,7 @@ WantedBy=multi-user.target
 EOF
 ```
 
-Activer le service :
+Activer :
 
 ```bash
 sudo systemctl daemon-reload
@@ -575,7 +497,7 @@ journalctl -u retropie-manual-hotkey.service -f
 
 ## Droits d’accès à la manette
 
-Si le service ne peut pas lire `/dev/input`, ajouter l’utilisateur `retropie` au groupe `input` :
+Si le service ne peut pas lire `/dev/input` :
 
 ```bash
 sudo usermod -aG input retropie
@@ -592,13 +514,13 @@ Ajouter dans :
 /opt/retropie/configs/all/runcommand-onstart.sh
 ```
 
-le bloc suivant :
+le bloc :
 
 ```bash
 python3 "/home/retropie/Documents/save_retropie/Manuels/scripts/set-current-manual.py" "$1" "$3"
 ```
 
-Le fichier doit être exécutable :
+Rendre exécutable :
 
 ```bash
 sudo chmod +x /opt/retropie/configs/all/runcommand-onstart.sh
@@ -608,15 +530,13 @@ sudo chmod +x /opt/retropie/configs/all/runcommand-onstart.sh
 
 ## Affichage du manuel
 
-Le script `open-current-manual.sh` utilise `xpdf` en plein écran.
+Le script utilise `xpdf` en plein écran.
 
-Important : dans la configuration testée, la session graphique utile est :
+Dans la configuration testée, la session graphique utile est :
 
 ```text
 DISPLAY=:1
 ```
-
-et non `DISPLAY=:0`.
 
 Test manuel :
 
@@ -625,13 +545,11 @@ DISPLAY=:1 XAUTHORITY=/home/retropie/.Xauthority \
 xpdf -fullscreen "/home/retropie/RetroPie/manuals/mastersystem/Chuck Rock.pdf"
 ```
 
-Si le PDF s’ouvre, le bon affichage est confirmé.
-
 ---
 
 ## Message si aucun manuel n’est disponible
 
-Si aucun manuel n’est trouvé, `open-current-manual.sh` affiche un message lisible avec `yad` :
+Si aucun manuel n’est trouvé, `open-current-manual.sh` affiche un message TV lisible avec `yad` :
 
 ```text
 Aucun manuel disponible
@@ -646,8 +564,6 @@ yad --center --on-top --no-buttons --timeout=2 \
     --text="<span font='32' weight='bold'>Aucun manuel disponible</span>"
 ```
 
-Le jeu continue en arrière-plan.
-
 ---
 
 ## Logs utiles pour les manuels
@@ -661,7 +577,7 @@ Le jeu continue en arrière-plan.
 /tmp/retropie-no-manual.log
 ```
 
-Commandes utiles :
+Commandes :
 
 ```bash
 cat /tmp/retropie-current-manual.txt
@@ -671,37 +587,261 @@ tail -f /tmp/retropie-manual-hotkey.log /tmp/retropie-open-manual.log /tmp/retro
 
 ---
 
-## Scripts consoles personnalisées
+# Partie 3 : Switch / Eden avec profils
 
-Les scripts de déploiement consoles servent à intégrer des systèmes personnalisés dans EmulationStation.
+## Objectif
 
-Exemples :
+Permettre de choisir un profil avant de lancer un jeu Switch.
 
-```text
-PS3
-Xbox
-Xbox 360
-Switch
-```
-
-Scripts principaux :
+Profils utilisés :
 
 ```text
-integrer-consoles-retropie.sh
-integrer_xenia_retropie.sh
-generer-raccourcis-ps3.sh
-generer-marquees-autre.py
-generer-marquees-xbox360-png.py
-generer-marquees-xbox360.py
+Lucas
+Oliv
+Nolan
+Océane
 ```
 
-Ces scripts doivent être adaptés selon les chemins locaux des émulateurs.
+Dossiers Linux utilisés :
+
+```text
+lucas
+oliv
+nolan
+oceane
+```
 
 ---
 
-## Intégration Xenia Canary directe
+## Dossiers Eden détectés
 
-Objectif :
+Eden utilise :
+
+```text
+/home/retropie/.cache/eden
+/home/retropie/.config/eden
+/home/retropie/.local/share/eden
+```
+
+Ces trois dossiers sont basculés vers le profil choisi.
+
+---
+
+## Arborescence des profils Switch
+
+```text
+/home/retropie/Documents/save_retropie/switch_profiles/
+├── _common/
+│   └── share/
+│       └── keys/
+├── lucas/
+│   ├── cache/
+│   ├── config/
+│   └── share/
+├── oliv/
+│   ├── cache/
+│   ├── config/
+│   └── share/
+├── nolan/
+│   ├── cache/
+│   ├── config/
+│   └── share/
+└── oceane/
+    ├── cache/
+    ├── config/
+    └── share/
+```
+
+---
+
+## Créer les profils
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/switch_profiles"
+
+for p in lucas oliv nolan oceane; do
+  mkdir -p "$PROFILES/$p/cache" "$PROFILES/$p/config" "$PROFILES/$p/share"
+done
+
+mkdir -p "$PROFILES/_common/share/keys"
+```
+
+---
+
+## Copier la config de base depuis le profil principal
+
+Exemple : copier la config `oliv` vers les autres profils.
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/switch_profiles"
+
+rsync -a "$PROFILES/oliv/config/" "$PROFILES/lucas/config/"
+rsync -a "$PROFILES/oliv/config/" "$PROFILES/nolan/config/"
+rsync -a "$PROFILES/oliv/config/" "$PROFILES/oceane/config/"
+
+rsync -a "$PROFILES/oliv/cache/" "$PROFILES/lucas/cache/"
+rsync -a "$PROFILES/oliv/cache/" "$PROFILES/nolan/cache/"
+rsync -a "$PROFILES/oliv/cache/" "$PROFILES/oceane/cache/"
+```
+
+Les dossiers `share` restent séparés pour conserver des sauvegardes distinctes.
+
+---
+
+## Fichiers communs Eden
+
+Les fichiers communs ne doivent pas être publiés.
+
+Ils peuvent être partagés localement entre profils via :
+
+```text
+/home/retropie/Documents/save_retropie/switch_profiles/_common/share/keys
+```
+
+Puis reliés à chaque profil :
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/switch_profiles"
+
+for p in lucas oliv nolan oceane; do
+  mkdir -p "$PROFILES/$p/share"
+
+  rm -rf "$PROFILES/$p/share/keys"
+  ln -s "$PROFILES/_common/share/keys" "$PROFILES/$p/share/keys"
+done
+```
+
+---
+
+## Attention au retour YAD
+
+Selon la configuration, `yad` peut renvoyer un profil avec un pipe final :
+
+```text
+oliv|
+```
+
+Le launcher doit nettoyer le nom avec :
+
+```bash
+PROFILE_NAME="${PROFILE_NAME%%|*}"
+PROFILE_NAME="$(echo "$PROFILE_NAME" | tr -d '[:space:]')"
+```
+
+Sans ce nettoyage, Eden créera des dossiers invalides comme :
+
+```text
+switch_profiles/oliv|/cache
+switch_profiles/oliv|/config
+switch_profiles/oliv|/share
+```
+
+---
+
+## Vérifier le profil actif
+
+Après avoir choisi un profil :
+
+```bash
+ls -l /home/retropie/.cache/eden
+ls -l /home/retropie/.config/eden
+ls -l /home/retropie/.local/share/eden
+```
+
+Exemple attendu :
+
+```text
+/home/retropie/.cache/eden -> /home/retropie/Documents/save_retropie/switch_profiles/oceane/cache
+/home/retropie/.config/eden -> /home/retropie/Documents/save_retropie/switch_profiles/oceane/config
+/home/retropie/.local/share/eden -> /home/retropie/Documents/save_retropie/switch_profiles/oceane/share
+```
+
+---
+
+## Launcher Switch avec choix du profil
+
+Le launcher principal :
+
+```text
+/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-switch-profile.sh
+```
+
+Il fait :
+
+```text
+1. ouvre un menu YAD stylisé ;
+2. permet de choisir Lucas, Oliv, Nolan ou Océane ;
+3. bascule les liens Eden vers le profil choisi ;
+4. lance Eden.AppImage avec le jeu demandé.
+```
+
+---
+
+## Support manette dans le menu Switch
+
+Le script suivant traduit les boutons de manette en touches clavier pour contrôler le menu YAD :
+
+```text
+/home/retropie/RetroPie/roms/emulateurs/custom-launchers/switch-profile-gamepad-mapper.py
+```
+
+Il utilise :
+
+```text
+D-pad haut/bas : navigation
+A : validation
+B : annulation
+```
+
+Dépendance nécessaire :
+
+```bash
+sudo apt install -y xdotool python3-evdev
+```
+
+Logs utiles :
+
+```text
+/tmp/switch-profile-gamepad.log
+/tmp/switch-retropie-profile.log
+```
+
+---
+
+## Modifier EmulationStation pour utiliser le launcher Switch
+
+Sauvegarder :
+
+```bash
+cp "/home/retropie/.emulationstation/es_systems.cfg" \
+   "/home/retropie/.emulationstation/es_systems.cfg.bak-switch-profile-$(date +%Y%m%d-%H%M%S)"
+```
+
+Dans le bloc Switch, la commande doit être :
+
+```xml
+<command>/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-switch-profile.sh %ROM%</command>
+```
+
+Attention à ne pas produire un double tag :
+
+```xml
+<command><command>...</command></command>
+```
+
+Si cela arrive, corriger en :
+
+```xml
+<command>/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-switch-profile.sh %ROM%</command>
+```
+
+---
+
+# Partie 4 : Xbox 360 / Xenia Canary
+
+## Objectif
+
+Remplacer le lancement via Xenia Manager par un lancement direct :
 
 ```text
 RetroPie -> fichier .xenia -> launch-xenia-canary.sh -> Xenia Canary
@@ -711,7 +851,7 @@ Xenia Manager devient optionnel. Il peut rester utile pour configurer ou tester,
 
 ---
 
-## Format des raccourcis `.xenia`
+## Format des fichiers `.xenia`
 
 Exemple :
 
@@ -726,7 +866,7 @@ Exemple :
 }
 ```
 
-Le launcher direct lit principalement :
+Le launcher lit principalement :
 
 ```text
 game_path
@@ -746,7 +886,13 @@ gpu = "vulkan"
 fullscreen = true
 ```
 
-Le mode `d3d12` avec `render_target_path_d3d12 = "rtv"` a été testé mais a provoqué un écran noir sur certains jeux. La configuration stable actuelle est donc Vulkan.
+Le mode D3D12 avec :
+
+```toml
+render_target_path_d3d12 = "rtv"
+```
+
+a été testé mais a provoqué un écran noir sur certains jeux. La configuration stable actuelle est donc Vulkan.
 
 ---
 
@@ -763,7 +909,7 @@ Dossiers observés :
 
 Dans certains cas, les sauvegardes utilisées par Xenia Manager doivent être recopiées vers le dossier Xenia direct.
 
-Exemple pour restaurer les profils Manager vers Xenia direct :
+Exemple de restauration des profils Manager vers Xenia direct :
 
 ```bash
 ROOT_CONTENT="/home/retropie/Games/xenia-emu/drive_c/Xenia_Canary/content"
@@ -787,51 +933,9 @@ done
 
 ---
 
-## Exemple de flux complet pour les manuels
+# Partie 5 : nettoyage avant GitHub
 
-```bash
-cd /home/retropie/Documents/save_retropie/Manuels
-
-scripts/scan-gamelists-manuels.py
-scripts/prepare-recherche-manuels.py
-
-scripts/moissonner-manuels-archive-v2-cute.py snes --limit 20 --debug
-
-scripts/moissonner-manuels-archive-v2-cute.py snes --download --sleep 8
-
-scripts/update-gamelists-manuals-from-pdfs.py
-```
-
----
-
-## Exemple de test complet ouverture manuel
-
-Forcer un manuel courant :
-
-```bash
-echo "/home/retropie/RetroPie/manuals/mastersystem/Chuck Rock.pdf" > /tmp/retropie-current-manual.txt
-```
-
-Tester l’ouverture :
-
-```bash
-/home/retropie/Documents/save_retropie/Manuels/scripts/open-current-manual.sh
-```
-
-Tester via la manette :
-
-```bash
-sudo systemctl restart retropie-manual-hotkey.service
-tail -f /tmp/retropie-manual-hotkey.log /tmp/retropie-open-manual.log
-```
-
-Puis faire un appui long sur L3.
-
----
-
-## Nettoyage avant commit GitHub
-
-Ranger les backups :
+## Ranger les backups
 
 ```bash
 cd /home/retropie/Documents/save_retropie/Manuels
@@ -842,13 +946,13 @@ find scripts -maxdepth 1 -type f \( -name "*.bak*" -o -name "*.OK-*" \) \
   -print -exec mv {} backups/scripts/ \;
 ```
 
-Supprimer les caches Python :
+## Supprimer les caches Python
 
 ```bash
 find scripts -type d -name "__pycache__" -exec rm -rf {} +
 ```
 
-Vérifier ce qui va partir sur GitHub :
+## Vérifier ce qui va partir
 
 ```bash
 cd /home/retropie/Documents/save_retropie
@@ -860,41 +964,35 @@ git status
 Contrôle anti-boulette :
 
 ```bash
-git status --short | grep -E 'pdf|backup|bak|__pycache__|\.csv|\.zip|\.iso|\.rvz|\.chd|\.bin' || echo "Rien de sale à envoyer"
+git status --short | grep -E 'pdf|backup|bak|__pycache__|\.csv|\.zip|\.iso|\.rvz|\.chd|\.bin|\.keys|switch_profiles' || echo "Rien de sale à envoyer"
 ```
 
 ---
 
-## Commandes Git utiles
+# Partie 6 : GitHub
 
-Initialiser le dépôt :
-
-```bash
-cd /home/retropie/Documents/save_retropie
-git init
-```
-
-Configurer le dépôt distant :
+## Dépôt distant
 
 ```bash
 git remote set-url origin git@github.com:chabad26/retropie-save-tools.git
 ```
 
-Ajouter les scripts :
+## Ajouter les fichiers utiles
 
 ```bash
+git add README.md
 git add .gitignore
 git add Manuels/scripts/*.py
 git add Manuels/scripts/*.sh
 ```
 
-Commit :
+## Commit
 
 ```bash
-git commit -m "Update RetroPie manuals tools"
+git commit -m "Update RetroPie tools documentation"
 ```
 
-Push :
+## Push
 
 ```bash
 git branch -M main
@@ -903,45 +1001,36 @@ git push -u origin main
 
 ---
 
-## Ce qui n’est pas inclus
+# Feuille de route
 
-Ce dépôt ne doit pas contenir :
+## Fait
 
-* ROMs ;
-* BIOS ;
-* ISOs ;
-* fichiers CHD ;
-* fichiers RVZ ;
-* fichiers WBFS ;
-* fichiers XCI / NSP ;
-* fichiers PKG / RAP ;
-* manuels PDF téléchargés ;
-* sauvegardes Xenia ;
-* profils d’émulateur personnels ;
-* caches ;
-* backups locaux volumineux ;
-* fichiers personnels.
+```text
+Manuels PDF
+Ouverture en jeu avec L3
+Message "Aucun manuel disponible"
+Switch avec profils Lucas / Oliv / Nolan / Océane
+Xenia Canary direct
+Sauvegardes Xenia restaurables par profil
+```
 
-Ces fichiers doivent rester locaux.
+## À faire
 
----
-
-## Licence
-
-À définir.
-
-Suggestions :
-
-* MIT pour un partage libre et simple ;
-* GPLv3 si vous souhaitez que les versions modifiées restent libres.
+```text
+PS3 : stabilisation RPCS3, trop de crashs actuellement
+PS3 : étudier la gestion de profils
+Xbox 360 : améliorer la gestion de profils Xenia
+Xbox 360 : appliquer éventuellement les configs par jeu
+Moissonneuse V3 : ajout d’une source alternative à Archive.org
+```
 
 ---
 
 ## État du projet
 
-Projet personnel en cours de nettoyage avant publication publique.
+Projet personnel fonctionnel mais encore adapté à une configuration précise.
 
 Objectif : fournir un kit simple pour aider d’autres utilisateurs RetroPie à sauvegarder, restaurer et enrichir leur installation.
 
-Le projet est fonctionnel mais reste adapté à une configuration précise. Certains chemins doivent être modifiés selon l’installation de l’utilisateur.
+Certains chemins doivent être modifiés selon l’installation de l’utilisateur.
 

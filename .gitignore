@@ -37,3 +37,6 @@ BIOS/
 *.zip
 *.7z
 *.rar
+
+# Profils et sauvegardes Switch / Eden
+switch_profiles/
