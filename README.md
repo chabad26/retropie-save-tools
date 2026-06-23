@@ -837,6 +837,310 @@ Si cela arrive, corriger en :
 
 ---
 
+## PS3 / RPCS3 avec profils joueurs
+
+### Objectif
+
+Ajouter un choix de profil avant le lancement d’un jeu PS3 depuis RetroPie, sur le même modèle que le sélecteur Switch.
+
+Profils utilisés :
+
+```text
+Lucas
+Nolan
+Océane
+Oliv
+```
+
+Dossiers Linux utilisés :
+
+```text
+lucas
+nolan
+oceane
+oliv
+```
+
+Le menu de sélection utilise un style sombre inspiré du thème Carbon custom, avec prise en charge de la manette via `xdotool` et `evdev`.
+
+---
+
+### Dossiers RPCS3 utilisés
+
+Sur cette installation, RPCS3 utilise principalement :
+
+```text
+/home/retropie/.config/rpcs3
+/home/retropie/.cache/rpcs3
+```
+
+Le dossier important pour les sauvegardes et données utilisateur est :
+
+```text
+/home/retropie/.config/rpcs3/dev_hdd0/home
+```
+
+---
+
+### Arborescence des profils PS3
+
+```text
+/home/retropie/Documents/save_retropie/ps3_profiles/
+├── _common/
+│   ├── config/
+│   │   ├── dev_flash
+│   │   ├── dev_flash2
+│   │   ├── dev_flash3
+│   │   └── dev_hdd0/
+│   │       ├── game
+│   │       └── disc
+│   └── cache/
+│       ├── cache
+│       ├── ppu_progs
+│       └── spu_progs
+├── lucas/
+│   ├── config/
+│   │   └── dev_hdd0/
+│   │       └── home
+│   └── cache/
+├── nolan/
+├── oceane/
+└── oliv/
+```
+
+Principe :
+
+```text
+_common = éléments lourds partagés
+chaque profil = saves / trophées / données utilisateur séparées
+```
+
+Cela évite de cloner 20 à 30 Go par joueur.
+
+---
+
+### Création des profils PS3
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/ps3_profiles"
+
+for p in lucas nolan oceane oliv; do
+  mkdir -p "$PROFILES/$p/config"
+  mkdir -p "$PROFILES/$p/cache"
+  mkdir -p "$PROFILES/$p/config/dev_hdd0/home"
+done
+
+mkdir -p "$PROFILES/_common/config"
+mkdir -p "$PROFILES/_common/cache"
+```
+
+---
+
+### Sauvegarde du profil RPCS3 actuel vers Oliv
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/ps3_profiles"
+
+rsync -avh /home/retropie/.config/rpcs3/ "$PROFILES/oliv/config/"
+rsync -avh /home/retropie/.cache/rpcs3/ "$PROFILES/oliv/cache/"
+```
+
+---
+
+### Mise en commun des gros dossiers RPCS3
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/ps3_profiles"
+
+mkdir -p "$PROFILES/_common/config/dev_hdd0"
+
+rsync -avh "$PROFILES/oliv/config/dev_flash/" "$PROFILES/_common/config/dev_flash/"
+rsync -avh "$PROFILES/oliv/config/dev_flash2/" "$PROFILES/_common/config/dev_flash2/" 2>/dev/null || true
+rsync -avh "$PROFILES/oliv/config/dev_flash3/" "$PROFILES/_common/config/dev_flash3/" 2>/dev/null || true
+
+rsync -avh "$PROFILES/oliv/config/dev_hdd0/game/" "$PROFILES/_common/config/dev_hdd0/game/" 2>/dev/null || true
+rsync -avh "$PROFILES/oliv/config/dev_hdd0/disc/" "$PROFILES/_common/config/dev_hdd0/disc/" 2>/dev/null || true
+
+rsync -avh "$PROFILES/oliv/cache/cache/" "$PROFILES/_common/cache/cache/" 2>/dev/null || true
+rsync -avh "$PROFILES/oliv/cache/ppu_progs/" "$PROFILES/_common/cache/ppu_progs/" 2>/dev/null || true
+rsync -avh "$PROFILES/oliv/cache/spu_progs/" "$PROFILES/_common/cache/spu_progs/" 2>/dev/null || true
+```
+
+---
+
+### Reconstruction légère des profils Lucas / Nolan / Océane
+
+Si les dossiers ont été supprimés ou doivent être reconstruits :
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/ps3_profiles"
+
+for p in lucas nolan oceane; do
+  mkdir -p "$PROFILES/$p/config"
+  mkdir -p "$PROFILES/$p/cache"
+  mkdir -p "$PROFILES/$p/config/dev_hdd0/home"
+
+  rsync -avh \
+    --exclude="dev_flash/" \
+    --exclude="dev_flash2/" \
+    --exclude="dev_flash3/" \
+    --exclude="dev_hdd0/game/" \
+    --exclude="dev_hdd0/disc/" \
+    --exclude="dev_hdd0/home/" \
+    "$PROFILES/oliv/config/" \
+    "$PROFILES/$p/config/"
+
+  rsync -avh \
+    --exclude="cache/" \
+    --exclude="ppu_progs/" \
+    --exclude="spu_progs/" \
+    --exclude="shaderlog/" \
+    "$PROFILES/oliv/cache/" \
+    "$PROFILES/$p/cache/"
+done
+```
+
+---
+
+### Liens vers les dossiers communs
+
+```bash
+PROFILES="/home/retropie/Documents/save_retropie/ps3_profiles"
+
+for p in lucas nolan oceane oliv; do
+  mkdir -p "$PROFILES/$p/config/dev_hdd0"
+  mkdir -p "$PROFILES/$p/cache"
+
+  rm -rf "$PROFILES/$p/config/dev_flash"
+  ln -s "$PROFILES/_common/config/dev_flash" "$PROFILES/$p/config/dev_flash"
+
+  rm -rf "$PROFILES/$p/config/dev_flash2"
+  ln -s "$PROFILES/_common/config/dev_flash2" "$PROFILES/$p/config/dev_flash2"
+
+  rm -rf "$PROFILES/$p/config/dev_flash3"
+  ln -s "$PROFILES/_common/config/dev_flash3" "$PROFILES/$p/config/dev_flash3"
+
+  rm -rf "$PROFILES/$p/config/dev_hdd0/game"
+  ln -s "$PROFILES/_common/config/dev_hdd0/game" "$PROFILES/$p/config/dev_hdd0/game"
+
+  rm -rf "$PROFILES/$p/config/dev_hdd0/disc"
+  ln -s "$PROFILES/_common/config/dev_hdd0/disc" "$PROFILES/$p/config/dev_hdd0/disc"
+
+  rm -rf "$PROFILES/$p/cache/cache"
+  ln -s "$PROFILES/_common/cache/cache" "$PROFILES/$p/cache/cache"
+
+  rm -rf "$PROFILES/$p/cache/ppu_progs"
+  ln -s "$PROFILES/_common/cache/ppu_progs" "$PROFILES/$p/cache/ppu_progs"
+
+  rm -rf "$PROFILES/$p/cache/spu_progs"
+  ln -s "$PROFILES/_common/cache/spu_progs" "$PROFILES/$p/cache/spu_progs"
+done
+```
+
+Résultat attendu :
+
+```text
+dev_hdd0/home = vrai dossier séparé par profil
+dev_hdd0/game = lien vers _common
+dev_flash     = lien vers _common
+cache/cache   = lien vers _common
+```
+
+---
+
+### Launcher PS3 avec profil
+
+Le launcher principal est :
+
+```text
+/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-ps3-profile.sh
+```
+
+Il fait :
+
+```text
+1. affiche le menu profil PS3 style Carbon ;
+2. permet de choisir Lucas, Nolan, Océane ou Oliv ;
+3. bascule /home/retropie/.config/rpcs3 vers le profil choisi ;
+4. bascule /home/retropie/.cache/rpcs3 vers le profil choisi ;
+5. appelle le launcher PS3 d’origine.
+```
+
+Le launcher d’origine est conservé comme cœur de lancement :
+
+```text
+/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-ps3-core.sh
+```
+
+Ce point est important, car les fichiers `.PS3` sont des raccourcis personnalisés. Ils ne doivent pas être envoyés directement à RPCS3 sans passer par le launcher existant.
+
+---
+
+### Commande EmulationStation pour PS3
+
+Dans :
+
+```text
+/home/retropie/.emulationstation/es_systems.cfg
+```
+
+Le bloc PS3 doit contenir :
+
+```xml
+<command>/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-ps3-profile.sh %ROM%</command>
+```
+
+Ancienne commande remplacée :
+
+```xml
+<command>/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-ps3.sh %ROM%</command>
+```
+
+Vérification :
+
+```bash
+grep -n -A10 -B4 -i "<name>ps3</name>" /home/retropie/.emulationstation/es_systems.cfg
+grep -n "<command><command>" /home/retropie/.emulationstation/es_systems.cfg || echo "Pas de double command"
+```
+
+---
+
+### Test direct
+
+```bash
+"/home/retropie/RetroPie/roms/emulateurs/custom-launchers/launch-ps3-profile.sh" \
+"/home/retropie/RetroPie/roms/PS3/Prince of Persia Trilogy (Europe) (En,Fr,De,Es,It).PS3"
+```
+
+Si le test direct fonctionne mais pas RetroPie, vérifier que `es_systems.cfg` pointe bien vers `launch-ps3-profile.sh`.
+
+---
+
+### Logs PS3 utiles
+
+```text
+/tmp/ps3-retropie-profile.log
+/tmp/switch-profile-gamepad.log
+```
+
+Commande :
+
+```bash
+tail -n 160 /tmp/ps3-retropie-profile.log
+```
+
+---
+
+### Exclusion Git
+
+Les profils PS3 ne doivent pas être versionnés.
+
+Ajouter dans `.gitignore` :
+
+```gitignore
+ps3_profiles/
+```
+
 # Partie 4 : Xbox 360 / Xenia Canary
 
 ## Objectif
