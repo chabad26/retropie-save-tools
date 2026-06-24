@@ -17,20 +17,30 @@ import xml.etree.ElementTree as ET
 
 HOME = Path.home()
 
-INPUT_CSV = HOME /Documents/save_retropie/Manuels/ "liste-jeux-pour-manuels-clean.csv"
-MANUALS_ROOT = HOME /Documents/save_retropie/Manuels/ "RetroPie" / "manuals"
-GAMELISTS_ROOT = HOME /Documents/save_retropie/Manuels/ ".emulationstation" / "gamelists"
-REPORT_PATH = HOME /Documents/save_retropie/Manuels/ "rapport-manuels-v3.csv"
+INPUT_CSV = HOME / "Documents/save_retropie/Manuels/rapports/liste-jeux-pour-manuels-clean.csv"
+MANUALS_ROOT = HOME / "Documents/save_retropie/Manuels/pdf"
+GAMELISTS_ROOT = HOME / ".emulationstation/gamelists"
+REPORT_PATH = HOME / "Documents/save_retropie/Manuels/rapports/rapport-manuels-v3.csv"
+VALIDATED_LINKS_CSV = HOME / "Documents/save_retropie/Manuels/rapports/liens-manuels-valides.csv"
 
-V2_SCRIPT = HOME /Documents/save_retropie/Manuels/ "moissonner-manuels-archive-v2.py"
+V2_SCRIPT = HOME / "Documents/save_retropie/Manuels/scripts/moissonner-manuels-archive-v2.py"
 
 CACHE_DIR = HOME / ".cache" / "retropie-manuals"
-ABANDONWARE_INDEX = CACHE_DIR / "abandonware-consoles-index.csv"
+REPLACEMENTDOCS_INDEX = CACHE_DIR / "replacementdocs-index.csv"
 
-USER_AGENT = "Mozilla/5.0 RetroPieManualHarvester/3.0"
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
-ABANDONWARE_BASE = "https://www.abandonware-france.org"
-ABANDONWARE_START = "https://www.abandonware-france.org/ltf_manuels/lst_manuels.php?manuels=consoles"
+REPLACEMENTDOCS_BASE = "https://www.replacementdocs.com"
+REPLACEMENTDOCS_DOWNLOADS = "https://www.replacementdocs.com/download.php"
+NOTIPIX_BASE = "https://notipix.fr"
+NOTIPIX_SEARCH_API = "https://notipix.fr/wp-json/wp/v2/search?search="
+
+# Fallback si ReplacementDocs bloque la page principale.
+# À compléter au fil des tests.
+REPLACEMENTDOCS_PLATFORM_IDS = {
+    "snes": "16",
+    "supernintendo": "16",
+}
 
 
 def load_v2():
@@ -80,7 +90,12 @@ class LinkParser(HTMLParser):
 
 
 def http_text(url: str) -> str:
-    request = Request(url, headers={"User-Agent": USER_AGENT})
+    request = Request(url, headers={
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+        "Referer": REPLACEMENTDOCS_BASE + "/",
+    })
 
     with urlopen(request, timeout=35) as response:
         raw = response.read()
@@ -89,7 +104,12 @@ def http_text(url: str) -> str:
 
 
 def http_bytes(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": USER_AGENT})
+    request = Request(url, headers={
+        "User-Agent": USER_AGENT,
+        "Accept": "application/pdf,application/octet-stream,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+        "Referer": REPLACEMENTDOCS_BASE + "/",
+    })
 
     with urlopen(request, timeout=60) as response:
         return response.read()
@@ -336,8 +356,382 @@ def is_pdf(data: bytes) -> bool:
     return data.startswith(b"%PDF")
 
 
+
+def rd_norm(value: str) -> str:
+    import re
+    import unicodedata
+
+    value = value or ""
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    value = value.lower()
+
+    # retire les infos de région / disque / version
+    value = re.sub(r"\([^)]*\)", " ", value)
+    value = re.sub(r"\[[^\]]*\]", " ", value)
+
+    # simplifie les séparateurs
+    value = value.replace("&", " and ")
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    value = re.sub(r"\b(the|a|an|le|la|les|de|des|du)\b", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def rd_score(search_name: str, title: str) -> int:
+    wanted = rd_norm(search_name)
+    got = rd_norm(title)
+
+    if not wanted or not got:
+        return 0
+
+    if wanted == got:
+        return 100
+
+    if wanted in got or got in wanted:
+        return 82
+
+    wanted_words = set(wanted.split())
+    got_words = set(got.split())
+
+    if not wanted_words:
+        return 0
+
+    common = wanted_words & got_words
+    score = int((len(common) / len(wanted_words)) * 70)
+
+    # bonus si le début colle bien
+    if got.startswith(next(iter(wanted_words), "")):
+        score += 5
+
+    return score
+
+
+def replacementdocs_platform_aliases(system: str) -> list[str]:
+    aliases = {
+        "snes": ["super nes", "super famicom"],
+        "supernintendo": ["super nes", "super famicom"],
+        "nes": ["nes", "famicom"],
+        "n64": ["nintendo 64"],
+        "gba": ["game boy advance"],
+        "gbc": ["game boy color"],
+        "gb": ["game boy"],
+        "gameboy": ["game boy"],
+        "gameboycolor": ["game boy color"],
+        "gameboyadvance": ["game boy advance"],
+        "genesis": ["genesis", "mega drive"],
+        "megadrive": ["genesis", "mega drive"],
+        "mastersystem": ["master system"],
+        "gamegear": ["game gear"],
+        "dreamcast": ["dreamcast"],
+        "saturn": ["saturn"],
+        "psx": ["playstation"],
+        "ps1": ["playstation"],
+        "playstation": ["playstation"],
+        "ps2": ["playstation 2"],
+        "ps3": ["playstation 3"],
+        "psp": ["psp"],
+        "psvita": ["ps vita"],
+        "gamecube": ["gamecube"],
+        "gc": ["gamecube"],
+        "wii": ["wii"],
+        "wiiu": ["wii u"],
+        "xbox": ["xbox"],
+        "xbox360": ["xbox 360"],
+        "3do": ["3do"],
+        "atarijaguar": ["jaguar"],
+        "jaguar": ["jaguar"],
+        "lynx": ["lynx"],
+        "colecovision": ["colecovision"],
+        "intellivision": ["intellivision"],
+        "tg16": ["turbografx", "pc engine"],
+        "pcengine": ["turbografx", "pc engine"],
+    }
+    key = (system or "").lower().replace("-", "").replace("_", "")
+    return aliases.get(key, [key])
+
+
+def replacementdocs_platform_id(system: str) -> str | None:
+    import re
+    from html import unescape
+
+    key = (system or "").lower().replace("-", "").replace("_", "")
+
+    if key in REPLACEMENTDOCS_PLATFORM_IDS:
+        return REPLACEMENTDOCS_PLATFORM_IDS[key]
+
+    try:
+        html = http_text(REPLACEMENTDOCS_DOWNLOADS)
+    except Exception as error:
+        print(f"  ⚠️ ReplacementDocs : index principal inaccessible ({error})")
+        return None
+
+    wanted_aliases = replacementdocs_platform_aliases(system)
+
+    # Exemple de lien : download.php?list.16=
+    links = re.findall(
+        r'<a\s+[^>]*href=["\']([^"\']*download\.php\?list\.(\d+)=[^"\']*)["\'][^>]*>(.*?)</a>',
+        html,
+        flags=re.I | re.S,
+    )
+
+    for href, platform_id, label_html in links:
+        label = re.sub(r"<.*?>", " ", label_html)
+        label = unescape(label)
+        label_norm = rd_norm(label)
+
+        for alias in wanted_aliases:
+            alias_norm = rd_norm(alias)
+            if alias_norm and alias_norm in label_norm:
+                return platform_id
+
+    return None
+
+
+def build_replacementdocs_index(system: str, max_pages: int, sleep: float, force: bool = False, platform_override: str | None = None) -> list[dict]:
+    import csv
+    import re
+    import time
+    from html import unescape
+    from urllib.parse import urljoin
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    cache_file = CACHE_DIR / f"replacementdocs-{system}.csv"
+
+    if cache_file.is_file() and not force:
+        with cache_file.open("r", encoding="utf-8", newline="") as file:
+            return list(csv.DictReader(file))
+
+    platform_id = platform_override or replacementdocs_platform_id(system)
+
+    if not platform_id:
+        print(f"  ⚠️ ReplacementDocs : plateforme introuvable pour {system}")
+        return []
+
+    print(f"📚 Construction index ReplacementDocs pour {system} / list.{platform_id}...")
+
+    start_url = f"{REPLACEMENTDOCS_BASE}/download.php?list.{platform_id}="
+    queue = [start_url]
+    seen_pages = set()
+    rows = []
+
+    while queue and len(seen_pages) < max_pages:
+        url = queue.pop(0)
+
+        if url in seen_pages:
+            continue
+
+        seen_pages.add(url)
+
+        try:
+            html = http_text(url)
+        except Exception as error:
+            print(f"  ⚠️ ReplacementDocs page impossible : {error}")
+            continue
+
+        for match in re.finditer(
+            r'<a\s+[^>]*href=["\']([^"\']*download\.php\?view\.(\d+)=[^"\']*)["\'][^>]*>(.*?)</a>',
+            html,
+            flags=re.I | re.S,
+        ):
+            href = match.group(1)
+            doc_id = match.group(2)
+            title_html = match.group(3)
+
+            title = re.sub(r"<.*?>", " ", title_html)
+            title = unescape(title)
+            title = re.sub(r"\s+", " ", title).strip()
+
+            if not title:
+                continue
+
+            detail_url = urljoin(REPLACEMENTDOCS_BASE + "/", href)
+
+            # Fenêtre de texte autour du lien pour récupérer "Manual", "JP Manual", etc.
+            start = max(0, match.start() - 120)
+            end = min(len(html), match.end() + 220)
+            context = re.sub(r"<.*?>", " ", html[start:end])
+            context = unescape(context)
+            context = re.sub(r"\s+", " ", context).strip()
+
+            language = "en"
+            lowered = context.lower()
+
+            if " jp manual" in lowered or "japanese" in lowered:
+                language = "jp"
+            elif " fr manual" in lowered or "french" in lowered:
+                language = "fr"
+
+            # On garde surtout les manuals, pas les maps si possible.
+            doc_type = "manual"
+            if " map " in f" {lowered} ":
+                doc_type = "map"
+
+            rows.append({
+                "source": "replacementdocs",
+                "system": system,
+                "id": doc_id,
+                "title": title,
+                "detail_url": detail_url,
+                "url": detail_url,
+                "language": language,
+                "doc_type": doc_type,
+                "filename": f"{title}.pdf",
+            })
+
+        # Pagination ReplacementDocs : on récupère les autres liens list.<id>...
+        for href in re.findall(
+            rf'href=["\']([^"\']*download\.php\?list\.{platform_id}[^"\']*)["\']',
+            html,
+            flags=re.I,
+        ):
+            next_url = urljoin(REPLACEMENTDOCS_BASE + "/", href)
+            if next_url not in seen_pages and next_url not in queue:
+                queue.append(next_url)
+
+        time.sleep(sleep)
+
+    # Déduplication par id
+    unique = {}
+    for row in rows:
+        unique[row["id"]] = row
+
+    rows = list(unique.values())
+
+    with cache_file.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=["source", "system", "id", "title", "detail_url", "url", "language", "doc_type", "filename"]
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"✅ Index ReplacementDocs : {len(rows)} entrées")
+    print(f"   Cache : {cache_file}")
+
+    return rows
+
+
+def find_replacementdocs(search_name: str, system: str, max_pages: int, sleep: float, force: bool = False, platform_id: str | None = None) -> dict | None:
+    rows = build_replacementdocs_index(
+        system,
+        max_pages=max_pages,
+        sleep=sleep,
+        force=force,
+        platform_override=platform_id,
+    )
+
+    best = None
+    best_score = 0
+
+    for row in rows:
+        if row.get("doc_type") and row["doc_type"] != "manual":
+            continue
+
+        score = rd_score(search_name, row.get("title", ""))
+
+        # on évite les manuels JP si on cherche autre chose
+        if row.get("language") == "jp":
+            score -= 25
+
+        if score > best_score:
+            best = dict(row)
+            best_score = score
+
+    if not best or best_score < 45:
+        return None
+
+    best["score"] = best_score
+    best["source"] = "replacementdocs"
+    return best
+
+
+def find_download_link_in_replacementdocs_detail(detail_url: str, doc_id: str | None = None) -> str | None:
+    import re
+    from urllib.parse import urljoin
+
+    html = http_text(detail_url)
+
+    # Liens explicites possibles dans la fiche.
+    candidates = []
+
+    for href in re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.I):
+        low = href.lower()
+
+        if ".pdf" in low:
+            candidates.append(urljoin(REPLACEMENTDOCS_BASE + "/", href))
+
+        if "download.php?" in low and (
+            "download." in low or
+            "get." in low or
+            "file." in low
+        ):
+            candidates.append(urljoin(REPLACEMENTDOCS_BASE + "/", href))
+
+    # Fallbacks e107 / ReplacementDocs probables.
+    if doc_id:
+        candidates.extend([
+            f"{REPLACEMENTDOCS_BASE}/download.php?download.{doc_id}=",
+            f"{REPLACEMENTDOCS_BASE}/download.php?download.{doc_id}",
+            f"{REPLACEMENTDOCS_BASE}/download.php?get.{doc_id}=",
+            f"{REPLACEMENTDOCS_BASE}/download.php?get.{doc_id}",
+        ])
+
+    seen = set()
+    for url in candidates:
+        if url in seen:
+            continue
+        seen.add(url)
+
+        try:
+            data = http_bytes(url)
+        except Exception:
+            continue
+
+        if data[:4] == b"%PDF" or b"%PDF" in data[:2048]:
+            return url
+
+    return None
+
+
+
 def download_any_pdf(candidate: dict, destination: Path, sleep: float) -> bool:
     source = candidate["source"]
+
+    if source == "notipix":
+        url = candidate["url"]
+
+        try:
+            data = google_drive_download_bytes(url)
+        except Exception as error:
+            print(f"  ❌ Notipix / Google Drive download impossible : {error}")
+            return False
+
+        if data[:4] != b"%PDF" and b"%PDF" not in data[:2048]:
+            print("  ⚠️ Notipix : le lien Google Drive ne retourne pas un PDF direct")
+            return False
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        return True
+
+    if source == "localcsv":
+        url = candidate["url"]
+
+        try:
+            data = http_bytes(url)
+        except (HTTPError, URLError, TimeoutError) as error:
+            print(f"  ❌ CSV local download impossible : {error}")
+            return False
+
+        if data[:4] != b"%PDF" and b"%PDF" not in data[:2048]:
+            print("  ⚠️ CSV local : fichier non PDF")
+            return False
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        return True
 
     if source == "archive":
         url = candidate["url"]
@@ -354,6 +748,37 @@ def download_any_pdf(candidate: dict, destination: Path, sleep: float) -> bool:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
+        return True
+
+    if source == "replacementdocs":
+        detail_url = candidate.get("detail_url") or candidate.get("url")
+        doc_id = candidate.get("id")
+
+        try:
+            download_url = find_download_link_in_replacementdocs_detail(detail_url, doc_id)
+        except (HTTPError, URLError, TimeoutError) as error:
+            print(f"  ❌ ReplacementDocs détail impossible : {error}")
+            return False
+
+        if not download_url:
+            print("  ⚠️ ReplacementDocs : lien PDF introuvable dans la fiche")
+            return False
+
+        time.sleep(sleep)
+
+        try:
+            data = http_bytes(download_url)
+        except (HTTPError, URLError, TimeoutError) as error:
+            print(f"  ❌ ReplacementDocs download impossible : {error}")
+            return False
+
+        if data[:4] != b"%PDF" and b"%PDF" not in data[:2048]:
+            print("  ⚠️ ReplacementDocs : le lien ne retourne pas un PDF direct")
+            return False
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        candidate["url"] = download_url
         return True
 
     if source == "abandonware":
@@ -444,6 +869,274 @@ def update_gamelist(system: str, mappings: dict[str, Path]) -> None:
     print(f"   Backup : {backup}")
 
 
+
+
+
+
+def notipix_platform_slugs(system: str) -> list[str]:
+    aliases = {
+        "nes": ["/nintendo/nes/"],
+        "famicom": ["/nintendo/famicom/"],
+        "snes": ["/nintendo/super-nintendo/"],
+        "supernintendo": ["/nintendo/super-nintendo/"],
+        "gb": ["/nintendo/game-boy/"],
+        "gameboy": ["/nintendo/game-boy/"],
+        "gbc": ["/nintendo/game-boy-color/"],
+        "gameboycolor": ["/nintendo/game-boy-color/"],
+        "gba": ["/nintendo/game-boy-advance/"],
+        "gameboyadvance": ["/nintendo/game-boy-advance/"],
+        "mastersystem": ["/sega/master-system/"],
+        "megadrive": ["/sega/mega-drive/"],
+        "genesis": ["/sega/mega-drive/"],
+        "gamegear": ["/sega/game-gear/"],
+        "neogeo": ["/autres/neogeo-aes/"],
+        "neogeoaes": ["/autres/neogeo-aes/"],
+        "pcengine": ["/autres/pc-engine/"],
+        "tg16": ["/autres/pc-engine/"],
+        "virtualboy": ["/nintendo/virtual-boy/"],
+    }
+
+    key = (system or "").lower().replace("-", "").replace("_", "")
+    return aliases.get(key, [])
+
+
+def extract_google_drive_file_id(url: str) -> str | None:
+    patterns = [
+        r"drive\.google\.com/file/d/([^/]+)/",
+        r"drive\.google\.com/open\?id=([^&]+)",
+        r"drive\.google\.com/uc\?id=([^&]+)",
+        r"id=([^&]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def google_drive_download_bytes(view_url: str) -> bytes:
+    from urllib.parse import urlencode
+    from urllib.request import build_opener, HTTPCookieProcessor, Request
+    from http.cookiejar import CookieJar
+
+    file_id = extract_google_drive_file_id(view_url)
+
+    if not file_id:
+        raise ValueError(f"ID Google Drive introuvable : {view_url}")
+
+    cj = CookieJar()
+    opener = build_opener(HTTPCookieProcessor(cj))
+
+    base = "https://drive.google.com/uc?" + urlencode({
+        "export": "download",
+        "id": file_id,
+    })
+
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/pdf,application/octet-stream,*/*;q=0.8",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    }
+
+    response = opener.open(Request(base, headers=headers), timeout=60)
+    data = response.read()
+
+    if data[:4] == b"%PDF" or b"%PDF" in data[:2048]:
+        return data
+
+    # Google Drive peut parfois demander une confirmation.
+    text = data.decode("utf-8", errors="replace")
+
+    confirm = None
+
+    for pattern in [
+        r"confirm=([0-9A-Za-z_]+)",
+        r'name="confirm"\s+value="([^"]+)"',
+    ]:
+        match = re.search(pattern, text)
+        if match:
+            confirm = match.group(1)
+            break
+
+    if confirm:
+        url = "https://drive.google.com/uc?" + urlencode({
+            "export": "download",
+            "id": file_id,
+            "confirm": confirm,
+        })
+
+        response = opener.open(Request(url, headers=headers), timeout=60)
+        data = response.read()
+
+        if data[:4] == b"%PDF" or b"%PDF" in data[:2048]:
+            return data
+
+    return data
+
+
+def notipix_candidate(search_name: str, original_name: str, system: str, debug: bool = False) -> dict | None:
+    import json
+    from urllib.parse import quote
+    from html import unescape
+
+    slugs = notipix_platform_slugs(system)
+
+    if not slugs:
+        if debug:
+            print(f"  ⚠️ Notipix : système non mappé pour {system}")
+        return None
+
+    url = NOTIPIX_SEARCH_API + quote(search_name)
+
+    try:
+        request = Request(url, headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+        })
+        data = json.loads(urlopen(request, timeout=30).read().decode("utf-8", errors="replace"))
+    except Exception as error:
+        print(f"  ⚠️ Notipix recherche impossible : {error}")
+        return None
+
+    candidates = []
+
+    for item in data:
+        title = unescape(item.get("title", "") or "")
+        page_url = item.get("url", "") or ""
+
+        if not page_url:
+            continue
+
+        # Filtre console : évite Famicom quand on demande NES, GB Color quand on demande NES, etc.
+        if not any(slug in page_url for slug in slugs):
+            continue
+
+        score = rd_score(search_name, title)
+
+        # Bonus si le titre WP colle bien au nom exact.
+        if normalize(title) == normalize(search_name):
+            score += 40
+
+        if score < 45:
+            continue
+
+        candidates.append({
+            "title": title,
+            "page_url": page_url,
+            "score": score,
+        })
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    best = candidates[0]
+
+    try:
+        request = Request(best["page_url"], headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+        })
+        html = urlopen(request, timeout=30).read().decode("utf-8", errors="replace")
+        html = unescape(html)
+    except Exception as error:
+        print(f"  ⚠️ Notipix fiche impossible : {error}")
+        return None
+
+    drive_urls = []
+
+    for match in re.finditer(r'https?://(?:drive|docs)\.google\.com/[^"\'>\s]+', html, flags=re.I):
+        drive_urls.append(match.group(0))
+
+    # Déduplication
+    seen = set()
+    drive_urls = [u for u in drive_urls if not (u in seen or seen.add(u))]
+
+    if not drive_urls:
+        if debug:
+            print(f"  ⚠️ Notipix : aucun lien Drive dans {best['page_url']}")
+        return None
+
+    drive_url = drive_urls[0]
+
+    return {
+        "source": "notipix",
+        "title": best["title"],
+        "score": best["score"] + 450,
+        "language": "fr",
+        "url": drive_url,
+        "page_url": best["page_url"],
+        "filename": f"{safe_filename(search_name)}.pdf",
+    }
+
+
+
+def local_csv_candidate(search_name: str, original_name: str, system: str) -> dict | None:
+    if not VALIDATED_LINKS_CSV.is_file():
+        return None
+
+    search_norm = normalize(search_name)
+    original_norm = normalize(original_name)
+
+    try:
+        with VALIDATED_LINKS_CSV.open("r", encoding="utf-8", newline="") as file:
+            rows = list(csv.DictReader(file))
+    except Exception as error:
+        print(f"  ⚠️ CSV validé illisible : {error}")
+        return None
+
+    best = None
+    best_score = -999
+
+    for row in rows:
+        if row.get("system", "").strip() != system:
+            continue
+
+        row_search = row.get("search_name", "").strip()
+        row_name = row.get("name", "").strip()
+        url = row.get("url", "").strip()
+
+        if not url:
+            continue
+
+        score = 0
+
+        if row_search and normalize(row_search) == search_norm:
+            score += 300
+
+        if row_name and normalize(row_name) == original_norm:
+            score += 250
+
+        if row_search and normalize(row_search) in search_norm:
+            score += 120
+
+        if row_search and search_norm in normalize(row_search):
+            score += 120
+
+        if score > best_score:
+            best_score = score
+            best = row
+
+    if not best or best_score < 120:
+        return None
+
+    filename = best.get("filename", "").strip() or f"{safe_filename(search_name)}.pdf"
+
+    return {
+        "source": "localcsv",
+        "title": best.get("search_name") or best.get("name") or search_name,
+        "score": best_score + 500,
+        "language": best.get("language", "unknown"),
+        "url": best.get("url", ""),
+        "filename": filename,
+    }
+
+
+
 def archive_candidate(v2, search_name: str, system: str, language: str, rows: int, debug: bool) -> dict | None:
     best = v2.find_best_pdf(
         search_name,
@@ -489,16 +1182,17 @@ def main():
     parser.add_argument("system")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--download", action="store_true")
-    parser.add_argument("--language", choices=["fr", "en"], default="fr")
+    parser.add_argument("--language", choices=["fr", "en"], default="localcsv,notipix,archive")
     parser.add_argument("--rows", type=int, default=20)
     parser.add_argument("--sleep", type=float, default=1.0)
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--refresh-abandonware", action="store_true")
-    parser.add_argument("--abandonware-pages", type=int, default=12)
+    parser.add_argument("--refresh-replacementdocs", action="store_true")
+    parser.add_argument("--replacementdocs-pages", type=int, default=12)
+    parser.add_argument("--replacementdocs-platform-id", default="", help="Force un ID ReplacementDocs, ex: 16 pour SNES")
     parser.add_argument(
         "--sources",
-        default="archive,abandonware",
-        help="Sources : archive,abandonware,replacementdocs",
+        default="archive,replacementdocs",
+        help="Sources : localcsv,notipix,archive,replacementdocs. ReplacementDocs est expérimental et peut être indisponible.",
     )
 
     args = parser.parse_args()
@@ -514,13 +1208,15 @@ def main():
     if "archive" in source_order:
         v2 = load_v2()
 
-    abandonware_index = []
-
-    if "abandonware" in source_order:
-        abandonware_index = build_abandonware_index(
-            max_pages=args.abandonware_pages,
-            sleep=args.sleep,
-            force=args.refresh_abandonware,
+    if "replacementdocs" in source_order:
+        print("⚠️ ReplacementDocs est connu comme instable / potentiellement cassé. Source gardée en expérimental.")
+    replacementdocs_index = []
+    if not INPUT_CSV.is_file():
+        raise SystemExit(
+            f"❌ CSV introuvable : {INPUT_CSV}\n"
+            "Lance d'abord :\n"
+            "  scripts/scan-gamelists-manuels.py\n"
+            "  scripts/prepare-recherche-manuels.py"
         )
 
     with INPUT_CSV.open("r", encoding="utf-8", newline="") as file:
@@ -572,7 +1268,22 @@ def main():
         for source in source_order:
             candidate = None
 
-            if source == "archive":
+            if source == "localcsv":
+                candidate = local_csv_candidate(
+                    search_name,
+                    original_name,
+                    args.system,
+                )
+
+            elif source == "notipix":
+                candidate = notipix_candidate(
+                    search_name,
+                    original_name,
+                    args.system,
+                    args.debug,
+                )
+
+            elif source == "archive":
                 candidate = archive_candidate(
                     v2,
                     search_name,
@@ -590,8 +1301,14 @@ def main():
                 )
 
             elif source == "replacementdocs":
-                print("  ⚠️ ReplacementDocs prévu, mais désactivé pour l'instant")
-                candidate = None
+                candidate = find_replacementdocs(
+                    search_name,
+                    args.system,
+                    max_pages=args.replacementdocs_pages,
+                    sleep=args.sleep,
+                    force=args.refresh_replacementdocs,
+                    platform_id=args.replacementdocs_platform_id or None,
+                )
 
             if candidate:
                 print(
@@ -601,8 +1318,16 @@ def main():
                 )
                 candidates.append(candidate)
 
-                # Français Abandonware fiable : on peut s'arrêter.
-                if source == "abandonware" and candidate.get("language") == "fr":
+                # CSV validé local : source fiable, on s'arrête.
+                if source == "localcsv":
+                    break
+
+                # Notipix : source française fiable si lien trouvé.
+                if source == "notipix":
+                    break
+
+                # ReplacementDocs expérimental.
+                if source == "replacementdocs" and candidate.get("language") in ("fr", "en"):
                     break
 
             time.sleep(args.sleep)
