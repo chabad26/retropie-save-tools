@@ -1,4 +1,4 @@
-# RetroPie Save Tools
+# RetroPie Toolbox
 
 Scripts personnels pour sauvegarder, réinstaller et enrichir une installation RetroPie / EmulationStation.
 
