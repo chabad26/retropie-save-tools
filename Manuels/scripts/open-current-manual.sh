@@ -7,7 +7,15 @@ CURRENT="/tmp/retropie-current-manual.txt"
 LOG="/tmp/retropie-open-manual.log"
 PDF_LOG="/tmp/retropie-pdf-viewer.log"
 
-GAMEPAD_DEVICE="/dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick"
+GAMEPAD_DEVICE="$(/home/retropie/Documents/save_retropie/Manuels/scripts/controller-detect.py --first 2>/dev/null || true)"
+
+if [ -z "$GAMEPAD_DEVICE" ]; then
+  GAMEPAD_DEVICE="$(/home/retropie/Documents/save_retropie/Manuels/scripts/controller-detect.py --first 2>/dev/null || true)"
+
+if [ -z "$GAMEPAD_DEVICE" ]; then
+  GAMEPAD_DEVICE="/dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick"
+fi
+fi
 GAMEPAD_CONTROLLER="/home/retropie/Documents/save_retropie/Manuels/scripts/manual-pdf-gamepad-controller.py"
 
 MANUAL=""

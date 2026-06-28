@@ -1,160 +1,586 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import csv
 import os
 import subprocess
+import shutil
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+
+from modules.core import load_settings
+from modules import settings, stats, dashboard, controllers
+from modules.plugin import discover_plugins
 
 HOME = Path.home()
 ROOT = HOME / "Documents/save_retropie"
 MANUELS = ROOT / "Manuels"
+INPUT_CSV = MANUELS / "rapports/liste-jeux-pour-manuels-clean.csv"
+ES_CFG = HOME / ".emulationstation/es_systems.cfg"
+SETTINGS = load_settings()
 
-def clear():
-    os.system("clear")
 
-def pause():
-    input("\nAppuie sur Entrée pour revenir au menu...")
+class DialogUI:
+    def __init__(self):
+        self.dialogrc = Path.home() / ".cache/retropie-tools/dialogrc"
+        self.dialogrc.parent.mkdir(parents=True, exist_ok=True)
+        self.dialogrc.write_text("""
+use_shadow = ON
+screen_color = (WHITE,BLACK,ON)
+shadow_color = (BLACK,BLACK,ON)
+dialog_color = (WHITE,BLACK,OFF)
+title_color = (CYAN,BLACK,ON)
+border_color = (CYAN,BLACK,ON)
+button_active_color = (BLACK,CYAN,ON)
+button_inactive_color = (WHITE,BLACK,OFF)
+menubox_color = (WHITE,BLACK,OFF)
+menubox_border_color = (CYAN,BLACK,ON)
+item_color = (WHITE,BLACK,OFF)
+item_selected_color = (BLACK,CYAN,ON)
+tag_color = (CYAN,BLACK,ON)
+tag_selected_color = (BLACK,CYAN,ON)
+""", encoding="utf-8")
+        os.environ["DIALOGRC"] = str(self.dialogrc)
 
-def run(cmd):
-    print("\nCommande :")
-    print(" ".join(map(str, cmd)))
-    print()
-    try:
-        subprocess.call([str(x) for x in cmd])
-    except KeyboardInterrupt:
-        print("\nInterruption demandée.")
+    def check(self):
+        if subprocess.call(["which", "dialog"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+            print("dialog absent. Installe-le avec : sudo apt install -y dialog")
+            sys.exit(1)
 
-def yesno(question):
-    return input(f"{question} [o/N] : ").strip().lower() in ("o", "oui", "y", "yes")
+    def menu(self, title, text, items, height=22, width=78, menu_height=12):
+        self.check()
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            output = tmp.name
 
-def title(text):
-    clear()
-    print("═══════════════════════════════════════════════")
-    print(f"        {text}")
-    print("═══════════════════════════════════════════════")
-    print()
+        cmd = [
+            "dialog",
+            "--clear",
+            "--backtitle", "RetroPie Save Tools",
+            "--title", title,
+            "--menu", text,
+            str(height), str(width), str(menu_height),
+        ]
 
-def manuals_menu():
-    while True:
-        title("Manuels")
-        print("1) Moissonneuse V3 Cute")
-        print("2) Contrôle qualité")
-        print("3) Résumé qualité")
-        print("4) Optimiser PDF lourds")
-        print("5) Mettre à jour gamelists depuis PDF")
-        print("0) Retour\n")
+        for key, label in items:
+            cmd.extend([str(key), str(label)])
 
-        c = input("Choix : ").strip()
+        result = subprocess.call(cmd, stderr=open(output, "w"))
+        choice = Path(output).read_text().strip()
+        Path(output).unlink(missing_ok=True)
 
-        if c == "1":
-            cmd = [MANUELS / "scripts/moissonner-manuels-v3-cute.py", "--choose"]
-            if yesno("Télécharger réellement ?"):
-                cmd.append("--download")
-            else:
-                cmd.append("--debug")
-            sleep = input("Pause entre requêtes [4] : ").strip() or "4"
-            cmd += ["--sleep", sleep]
-            run(cmd); pause()
+        if result != 0:
+            return "0"
 
-        elif c == "2":
-            cmd = [MANUELS / "scripts/check-manuels.py", "--only-problems"]
-            if yesno("Vérifier les gamelists ?"):
-                cmd.append("--check-gamelists")
-            run(cmd); pause()
+        return choice
 
-        elif c == "3":
-            run([MANUELS / "scripts/resume-qualite-manuels.py", "--limit", "20"]); pause()
+    def yesno(self, question):
+        return subprocess.call([
+            "dialog",
+            "--backtitle", "RetroPie Save Tools",
+            "--title", "Confirmation",
+            "--yesno", question,
+            "8", "70",
+        ]) == 0
 
-        elif c == "4":
-            optimize_menu()
+    def input(self, title, question, default=""):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            output = tmp.name
 
-        elif c == "5":
-            system = input("Console à mettre à jour, vide = toutes : ").strip()
-            cmd = [MANUELS / "scripts/update-gamelists-manuals-from-pdfs.py"]
-            if system:
-                cmd.append(system)
-            run(cmd); pause()
+        result = subprocess.call([
+            "dialog",
+            "--backtitle", "RetroPie Save Tools",
+            "--title", title,
+            "--inputbox", question,
+            "8", "78",
+            default,
+        ], stderr=open(output, "w"))
 
-        elif c == "0":
+        value = Path(output).read_text().strip()
+        Path(output).unlink(missing_ok=True)
+
+        if result != 0:
+            return None
+
+        return value
+
+    def msg(self, title, message):
+        subprocess.call([
+            "dialog",
+            "--backtitle", "RetroPie Save Tools",
+            "--title", title,
+            "--msgbox", message,
+            "18", "78",
+        ])
+
+    def textbox(self, title, path):
+        path = Path(path)
+
+        if not path.is_file():
+            self.msg(title, f"Fichier introuvable :\n{path}")
             return
 
-def optimize_menu():
-    title("Optimisation PDF")
-    print("1) Dry-run PDF problématiques > 50 Mo")
-    print("2) Optimiser PDF problématiques > 50 Mo")
-    print("3) Optimiser un fichier précis")
-    print("0) Retour\n")
+        subprocess.call([
+            "dialog",
+            "--backtitle", "RetroPie Save Tools",
+            "--title", title,
+            "--textbox", str(path),
+            "30", "120",
+        ])
 
-    c = input("Choix : ").strip()
 
-    if c == "1":
-        run([MANUELS / "scripts/optimize-manuels.py", "--only-problems", "--min-size", "50M", "--dry-run"]); pause()
-    elif c == "2":
-        if yesno("Confirmer optimisation réelle ?"):
-            run([MANUELS / "scripts/optimize-manuels.py", "--only-problems", "--min-size", "50M"])
-        pause()
-    elif c == "3":
-        path = input("Chemin PDF, ex: pdf/gba/Fichier.pdf : ").strip()
-        if path:
-            run([MANUELS / "scripts/optimize-manuels.py", path, "--quality", "ebook"])
-        pause()
+class App:
+    def __init__(self):
+        self.ui = DialogUI()
 
-def system_menu():
-    while True:
-        title("Diagnostic")
-        print("1) Diagnostic rapide")
-        print("2) Diagnostic complet + dépendances + stats")
-        print("3) Réparation simple + diagnostic")
-        print("0) Retour\n")
+    def reload_settings(self):
+        global SETTINGS
+        SETTINGS = load_settings()
 
-        c = input("Choix : ").strip()
+    def run_action(self, fn, *args, **kwargs):
+        os.system("clear")
+        try:
+            fn(*args, **kwargs)
+        except KeyboardInterrupt:
+            print("\nInterruption demandée.")
+        input("\nAppuie sur Entrée pour revenir au menu...")
 
-        if c == "1":
-            run([ROOT / "scripts/check-retropie.py", "--no-quality"]); pause()
-        elif c == "2":
-            run([ROOT / "scripts/check-retropie.py", "--doctor", "--stats"]); pause()
-        elif c == "3":
-            if yesno("Lancer les réparations automatiques simples ?"):
-                run([ROOT / "scripts/check-retropie.py", "--fix", "--doctor", "--stats"])
-            pause()
-        elif c == "0":
+    def run_cmd(self, cmd):
+        os.system("clear")
+        print("Commande :")
+        print(" ".join(map(str, cmd)))
+        print()
+
+        try:
+            subprocess.call([str(x) for x in cmd])
+        except KeyboardInterrupt:
+            print("\nInterruption demandée.")
+
+        input("\nAppuie sur Entrée pour revenir au menu...")
+
+    def get_systems(self):
+        systems = set()
+
+        if ES_CFG.is_file():
+            try:
+                root = ET.parse(ES_CFG).getroot()
+                for node in root.findall("system"):
+                    name = (node.findtext("name") or "").strip()
+                    if name:
+                        systems.add(name)
+            except Exception:
+                pass
+
+        if not systems and INPUT_CSV.is_file():
+            with INPUT_CSV.open("r", encoding="utf-8", newline="") as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    system = (row.get("system") or "").strip()
+                    if system:
+                        systems.add(system)
+
+        return sorted(systems)
+
+    def choose_system(self, title="Choisir une console", allow_all=False):
+        systems = self.get_systems()
+
+        if not systems:
+            self.ui.msg("Erreur", "Aucune console trouvée.\nVérifie es_systems.cfg ou le CSV des manuels.")
+            return ""
+
+        items = []
+
+        if allow_all:
+            items.append(("__ALL__", "Toutes les consoles"))
+
+        for system in systems:
+            items.append((system, system))
+
+        return self.ui.menu("🎮 " + title, "Consoles disponibles", items, height=28, width=78, menu_height=18)
+
+    def main_menu(self):
+        while True:
+            choice = self.ui.menu(
+                "🌑 RetroPie Save Tools",
+                "Interface Carbon",
+                [
+                    ("1", "📊 Tableau de bord"),
+                    ("2", "🧩 Plugins"),
+                    ("0", "Quitter"),
+                ],
+            )
+
+            if choice == "1":
+                self.ui.msg("📊 Tableau de bord", dashboard.text())
+            elif choice == "2":
+                self.plugins_menu()
+            elif choice in ("0", None):
+                os.system("clear")
+                print("À plus dans la forge RetroPie 🌾")
+                return
+
+    def manuals_menu(self):
+        while True:
+            choice = self.ui.menu(
+                "📚 Manuels",
+                "Gestion des manuels PDF",
+                [
+                    ("1", "Moissonneuse V3 Cute"),
+                    ("2", "Contrôle qualité"),
+                    ("3", "Résumé qualité"),
+                    ("4", "Optimiser PDF lourds"),
+                    ("5", "Mettre à jour les gamelists"),
+                    ("7", "Manettes détectées"),
+                    ("0", "Retour"),
+                ],
+            )
+
+            if choice == "7":
+                self.run_cmd([MANUELS / "scripts/controller-detect.py"])
+            elif choice == "1":
+                self.harvest_manuals()
+            elif choice == "2":
+                self.check_manuals()
+            elif choice == "3":
+                self.run_cmd([MANUELS / "scripts/resume-qualite-manuels.py", "--limit", "40"])
+            elif choice == "4":
+                self.optimize_menu()
+            elif choice == "5":
+                self.update_gamelists()
+            elif choice == "0":
+                return
+
+    def harvest_manuals(self):
+        system = self.choose_system("Moissonneuse V3", allow_all=True)
+
+        if not system:
             return
 
-def profiles_menu():
-    title("Profils joueurs")
-    print("Profils gérés : Lucas, Nolan, Océane, Oliv\n")
-    print("Switch / Eden :")
-    print(f"  {ROOT / 'switch_profiles'}\n")
-    print("PS3 / RPCS3 :")
-    print(f"  {ROOT / 'ps3_profiles'}\n")
-    print("Xbox 360 / Xenia :")
-    print(f"  {ROOT / 'xbox360_profiles'}\n")
-    print("Le choix du profil se fait au lancement du jeu.")
-    pause()
-
-def main():
-    while True:
-        title("RetroPie Save Tools")
-        print("1) Manuels")
-        print("2) Diagnostic / réparation")
-        print("3) Profils joueurs")
-        print("4) Git status")
-        print("0) Quitter\n")
-
-        c = input("Choix : ").strip()
-
-        if c == "1":
-            manuals_menu()
-        elif c == "2":
-            system_menu()
-        elif c == "3":
-            profiles_menu()
-        elif c == "4":
-            run(["git", "-C", str(ROOT), "status", "--short"]); pause()
-        elif c == "0":
-            print("À plus dans la forge RetroPie. 🌾")
-            return
+        if system == "__ALL__":
+            cmd = [MANUELS / "scripts/moissonner-manuels-v3-cute.py", "--all"]
         else:
-            pause()
+            cmd = [MANUELS / "scripts/moissonner-manuels-v3-cute.py", system]
+
+        if self.ui.yesno("Télécharger réellement les PDF ?"):
+            cmd.append("--download")
+        else:
+            cmd.append("--debug")
+
+        sleep = self.ui.input("Pause", "Pause entre requêtes :", "4")
+
+        if sleep is None:
+            return
+
+        if sleep == "":
+            sleep = "4"
+
+        cmd.extend(["--sleep", sleep])
+
+        self.run_cmd(cmd)
+
+    def check_manuals(self):
+        cmd = [MANUELS / "scripts/check-manuels.py", "--only-problems"]
+
+        if self.ui.yesno("Vérifier aussi les liens gamelist.xml ?"):
+            cmd.append("--check-gamelists")
+
+        self.run_cmd(cmd)
+
+    def optimize_menu(self):
+        choice = self.ui.menu(
+            "🗜️ Optimisation PDF",
+            "Compression Ghostscript avec sauvegarde automatique",
+            [
+                ("1", "Dry-run PDF problématiques > 50 Mo"),
+                ("2", "Optimiser PDF problématiques > 50 Mo"),
+                ("3", "Optimiser un fichier précis"),
+                ("0", "Retour"),
+            ],
+        )
+
+        if choice == "1":
+            self.run_cmd([MANUELS / "scripts/optimize-manuels.py", "--only-problems", "--min-size", "50M", "--dry-run"])
+        elif choice == "2":
+            if self.ui.yesno("Confirmer optimisation réelle ?"):
+                self.run_cmd([MANUELS / "scripts/optimize-manuels.py", "--only-problems", "--min-size", "50M"])
+        elif choice == "3":
+            path = self.ui.input("PDF", "Chemin PDF, ex: pdf/gba/Fichier.pdf :", "")
+
+            if path is None:
+                return
+
+            if path:
+                self.run_cmd([MANUELS / "scripts/optimize-manuels.py", path, "--quality", "ebook"])
+
+    def update_gamelists(self):
+        system = self.choose_system("Mise à jour gamelist", allow_all=True)
+
+        if not system:
+            return
+
+        cmd = [MANUELS / "scripts/update-gamelists-manuals-from-pdfs.py"]
+
+        if system != "__ALL__":
+            cmd.append(system)
+
+        self.run_cmd(cmd)
+
+
+    def controllers_menu(self):
+        while True:
+            choice = self.ui.menu(
+                "🎮 Manettes",
+                "Détection et tests des contrôleurs",
+                [
+                    ("1", "Manettes détectées"),
+                    ("2", "Tester les touches"),
+                    ("0", "Retour"),
+                ],
+            )
+
+            if choice == "1":
+                self.run_action(controllers.detect)
+            elif choice == "2":
+                self.run_action(controllers.test)
+
+            elif choice == "3":
+                self.ui.msg(
+                    f"Dépendances - {name}",
+                    self.plugin_dependencies_text(plugin)
+                )
+
+            elif choice in ("0", None):
+                return
+
+    def diagnostic_menu(self):
+        while True:
+            choice = self.ui.menu(
+                "🩺 Diagnostic",
+                "Contrôle de l'installation",
+                [
+                    ("1", "Diagnostic rapide"),
+                    ("2", "Diagnostic complet + dépendances + stats"),
+                    ("3", "Réparation simple + diagnostic"),
+                    ("7", "Manettes détectées"),
+                    ("0", "Retour"),
+                ],
+            )
+
+            if choice == "7":
+                self.run_cmd([MANUELS / "scripts/controller-detect.py"])
+            elif choice == "1":
+                self.run_cmd([ROOT / "scripts/check-retropie.py", "--no-quality"])
+            elif choice == "2":
+                self.run_cmd([ROOT / "scripts/check-retropie.py", "--doctor", "--stats"])
+            elif choice == "3":
+                if self.ui.yesno("Lancer les réparations automatiques simples ?"):
+                    self.run_cmd([ROOT / "scripts/check-retropie.py", "--fix", "--doctor", "--stats"])
+            elif choice == "0":
+                return
+
+    def profiles_menu(self):
+        self.ui.msg(
+            "👤 Profils joueurs",
+            "Profils gérés : Lucas, Nolan, Océane, Oliv\n\n"
+            f"Switch / Eden :\n{ROOT / 'switch_profiles'}\n\n"
+            f"PS3 / RPCS3 :\n{ROOT / 'ps3_profiles'}\n\n"
+            f"Xbox 360 / Xenia :\n{ROOT / 'xbox360_profiles'}\n\n"
+            "Le choix du profil se fait au lancement du jeu.",
+        )
+
+    def plugin_dependencies_text(self, plugin):
+        deps = plugin.get("requires", [])
+
+        if not deps:
+            return "Aucune dépendance déclarée."
+
+        lines = []
+
+        for dep in deps:
+            found = shutil.which(dep)
+            if found:
+                lines.append(f"✅ {dep} : {found}")
+            else:
+                lines.append(f"❌ {dep} : absent")
+
+        return "\n".join(lines)
+
+    def plugin_detail_menu(self, plugin):
+        while True:
+            name = plugin.get("name", "Plugin")
+
+            choice = self.ui.menu(
+                name,
+                "Plugin sélectionné",
+                [
+                    ("1", "Lancer"),
+                    ("2", "À propos"),
+                    ("3", "Dépendances"),
+                    ("0", "Retour"),
+                ],
+            )
+
+            if choice == "1":
+                runner = plugin.get("run")
+                if callable(runner):
+                    runner(self)
+                else:
+                    self.ui.msg(name, "Ce plugin ne possède pas de fonction run().")
+
+            elif choice == "2":
+                status_fn = plugin.get("status")
+                status_text = "Non disponible"
+
+                if callable(status_fn):
+                    try:
+                        st = status_fn()
+                        status_text = f"{st.get('state', 'unknown').upper()} - {st.get('message', '')}"
+                    except Exception as exc:
+                        status_text = f"ERROR - {exc}"
+
+                self.ui.msg(
+                    name,
+                    "ID : {id}\n"
+                    "Nom : {name}\n"
+                    "Description : {description}\n"
+                    "Version : {version}\n"
+                    "Auteur : {author}\n"
+                    "Ordre : {order}\n"
+                    "Chemin : {path}\n\n"
+                    "État : {status}".format(
+                        id=plugin.get("id", ""),
+                        name=plugin.get("name", ""),
+                        description=plugin.get("description", ""),
+                        version=plugin.get("version", ""),
+                        author=plugin.get("author", ""),
+                        order=plugin.get("order", ""),
+                        path=plugin.get("path", ""),
+                        status=status_text,
+                    )
+                )
+
+            elif choice == "3":
+                self.ui.msg(
+                    f"Dépendances - {name}",
+                    self.plugin_dependencies_text(plugin)
+                )
+
+            elif choice in ("0", None):
+                return
+
+    def plugins_menu(self):
+        plugins = discover_plugins()
+
+        if not plugins:
+            self.ui.msg("Plugins", "Aucun plugin détecté.")
+            return
+
+        plugins = sorted(plugins, key=lambda p: p.get("order", 999))
+
+        items = []
+        plugin_by_key = {}
+
+        for index, plugin in enumerate(plugins, start=1):
+            key = str(index)
+            label = f"{plugin.get('name', plugin.get('id', 'Plugin'))} - {plugin.get('description', '')}"
+            items.append((key, label))
+            plugin_by_key[key] = plugin
+
+        items.append(("0", "Retour"))
+
+        while True:
+            choice = self.ui.menu(
+                "🧩 Plugins",
+                "Plugins détectés automatiquement",
+                items,
+                height=24,
+                width=90,
+                menu_height=14,
+            )
+
+            if choice in ("0", None):
+                return
+
+            plugin = plugin_by_key.get(choice)
+
+            if plugin:
+                self.plugin_detail_menu(plugin)
+
+    def settings_menu(self):
+        while True:
+            choice = self.ui.menu(
+                "⚙️ Paramètres",
+                "Configuration centrale",
+                [
+                    ("1", "Voir settings.yml"),
+                    ("2", "Modifier pause moissonneuse"),
+                    ("3", "Modifier sources manuels"),
+                    ("4", "Modifier seuil optimisation PDF"),
+                    ("0", "Retour"),
+                ],
+            )
+
+            if choice == "1":
+                self.ui.textbox("settings.yml", ROOT / "config/settings.yml")
+
+            elif choice == "2":
+                value = self.ui.input("Pause", "Pause entre requêtes en secondes :", str(SETTINGS["manuals"].get("sleep", 4)))
+                if value is not None and value.strip().isdigit():
+                    settings.set_manual_sleep(value.strip())
+                    self.reload_settings()
+                    self.ui.msg("OK", "Pause mise à jour.")
+                    return
+
+            elif choice == "3":
+                value = self.ui.input("Sources", "Sources, ex: localcsv,notipix,archive :", SETTINGS["manuals"].get("sources", "localcsv,notipix,archive"))
+                if value is not None and value.strip():
+                    settings.set_manual_sources(value.strip())
+                    self.reload_settings()
+                    self.ui.msg("OK", "Sources mises à jour.")
+                    return
+
+            elif choice == "4":
+                value = self.ui.input("Seuil", "Seuil optimisation, ex: 50M :", SETTINGS["manuals"].get("quality_min_size", "50M"))
+                if value is not None and value.strip():
+                    settings.set_quality_min_size(value.strip())
+                    self.reload_settings()
+                    self.ui.msg("OK", "Seuil mis à jour.")
+                    return
+
+            elif choice in ("0", None):
+                return
+
+    def reports_menu(self):
+        while True:
+            choice = self.ui.menu(
+                "🚨 Erreurs / rapports",
+                "Afficher les rapports utiles",
+                [
+                    ("1", "Résumé qualité des manuels"),
+                    ("2", "Rapport qualité CSV"),
+                    ("3", "Rapport optimisation CSV"),
+                    ("4", "Logs ouverture manuel"),
+                    ("5", "Logs hotkey manuel"),
+                    ("6", "Logs contrôle PDF manette"),
+                    ("0", "Retour"),
+                ],
+            )
+
+            if choice == "1":
+                self.run_cmd([MANUELS / "scripts/resume-qualite-manuels.py", "--limit", "40"])
+            elif choice == "2":
+                self.ui.textbox("Rapport qualité", MANUELS / "rapports/rapport-qualite-manuels.csv")
+            elif choice == "3":
+                self.ui.textbox("Rapport optimisation", MANUELS / "rapports/rapport-optimisation-manuels.csv")
+            elif choice == "4":
+                self.ui.textbox("Logs ouverture manuel", "/tmp/retropie-open-manual.log")
+            elif choice == "5":
+                self.ui.textbox("Logs hotkey manuel", "/tmp/retropie-manual-hotkey.log")
+            elif choice == "6":
+                self.ui.textbox("Logs PDF manette", "/tmp/retropie-manual-pdf-gamepad.log")
+            elif choice == "0":
+                return
+
 
 if __name__ == "__main__":
-    main()
+    App().main_menu()

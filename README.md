@@ -1,4 +1,4 @@
-# RetroPie Save Tools
+# RetroPie Toolbox
 
 Scripts personnels pour sauvegarder, réinstaller et enrichir une installation RetroPie / EmulationStation.
 
@@ -1632,16 +1632,13 @@ Objectif : rendre l'ensemble du projet accessible sans avoir à lancer chaque sc
 - Contrôle qualité des PDF
 - Optimisation automatique des PDF
 - Diagnostic de l'installation
-
-### 🚧 En cours
-
 - Interface utilisateur unifiée (`retropie-tools`)
 - Amélioration de l'interface Carbon
 - Compatibilité avec davantage de manettes
+- Scraper des médias
 
 ### 💡 Prévu
 
-- Scraper des médias
 - Mise à jour automatique des manuels
 - Traductions (README anglais)
 - Création d'un installeur "one-click"

@@ -1,0 +1,20 @@
+app:
+  name: RetroPie Save Tools
+  version: 2.0.0-dev
+  theme: carbon
+paths:
+  root: /home/retropie/Documents/save_retropie
+  manuals: /home/retropie/Documents/save_retropie/Manuels
+  retropie: /home/retropie/RetroPie
+  emulationstation: /home/retropie/.emulationstation
+manuals:
+  sources: localcsv,notipix,archive
+  sleep: 4
+  quality_min_size: 50M
+players:
+- lucas
+- nolan
+- oceane
+- oliv
+controllers:
+  mapping: /home/retropie/Documents/save_retropie/Manuels/config/controller-map.json

@@ -2,94 +2,121 @@
 
 from evdev import InputDevice, ecodes
 from pathlib import Path
-import subprocess
-import sys
-import time
-import os
+import json, os, subprocess, time, select, sys
 
-DEVICE_PATH = sys.argv[1] if len(sys.argv) > 1 else "/dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick"
-
+DETECT = "/home/retropie/Documents/save_retropie/Manuels/scripts/controller-detect.py"
+MAP_FILE = Path("/home/retropie/Documents/save_retropie/Manuels/config/controller-map.json")
 OPEN_SCRIPT = "/home/retropie/Documents/save_retropie/Manuels/scripts/open-current-manual.sh"
 LOG = Path("/tmp/retropie-manual-hotkey.log")
-
-# Manette PowerA testée :
-# L3 = code 314 = BTN_SELECT
-# R3 = code 315 = BTN_START
-LEFT_STICK_CODES = {
-    ecodes.BTN_SELECT,
-    ecodes.BTN_THUMBL,
-}
-
-RIGHT_STICK_CODES = {
-    ecodes.BTN_START,
-    ecodes.BTN_THUMBR,
-}
-
 COOLDOWN_SECONDS = 2.5
 
+def log(msg):
+    with LOG.open("a", encoding="utf-8") as f:
+        f.write(f"{time.ctime()} | {msg}\n")
 
-def log(message: str) -> None:
-    with LOG.open("a", encoding="utf-8") as file:
-        file.write(f"{time.ctime()} | {message}\n")
+def code_from_name(name):
+    v = getattr(ecodes, name, None)
+    return v if isinstance(v, int) else None
 
+def load_combos():
+    combos = [
+        ["BTN_THUMBL", "BTN_THUMBR"],
+        ["BTN_SELECT", "BTN_START"],
+    ]
 
-def open_manual() -> None:
-    log("Ouverture manuel demandée par combo L3+R3")
+    try:
+        if MAP_FILE.is_file():
+            data = json.loads(MAP_FILE.read_text(encoding="utf-8"))
+            hotkeys = data.get("hotkeys", {})
 
+            if "open_manual_combos" in hotkeys:
+                combos = hotkeys["open_manual_combos"]
+            elif "open_manual_combo" in hotkeys:
+                combos = [hotkeys["open_manual_combo"]]
+
+    except Exception as e:
+        log(f"Mapping illisible, fallback : {e}")
+
+    resolved = []
+
+    for combo in combos:
+        codes = {code_from_name(name) for name in combo}
+        codes = {code for code in codes if code is not None}
+
+        if codes:
+            resolved.append(codes)
+
+    return resolved or [{ecodes.BTN_THUMBL, ecodes.BTN_THUMBR}]
+
+def detect_all():
+    try:
+        out = subprocess.check_output([DETECT, "--json"], text=True, stderr=subprocess.DEVNULL)
+        data = json.loads(out)
+        return [d["path"] for d in data if d.get("path")]
+    except Exception as e:
+        log(f"Auto-détection impossible : {e}")
+        return []
+
+def open_manual():
+    log("Ouverture manuel demandée")
     env = os.environ.copy()
     env["DISPLAY"] = ":1"
     env["XAUTHORITY"] = "/home/retropie/.Xauthority"
+    subprocess.Popen([OPEN_SCRIPT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
-    subprocess.Popen(
-        [OPEN_SCRIPT],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=env,
-    )
+paths = sys.argv[1:] if len(sys.argv) > 1 else detect_all()
 
+if not paths:
+    paths = ["/dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick"]
 
-try:
-    device = InputDevice(DEVICE_PATH)
-except Exception as exc:
-    log(f"Impossible d'ouvrir {DEVICE_PATH}: {exc}")
+devices = []
+for path in paths:
+    try:
+        dev = InputDevice(path)
+        devices.append(dev)
+        log(f"Watcher écoute : {path} | name={dev.name} | fd={dev.fd}")
+    except Exception as e:
+        log(f"Impossible d'ouvrir {path}: {e}")
+
+if not devices:
+    log("Aucun device ouvert, arrêt")
     sys.exit(1)
 
-log(f"Watcher démarré sur {DEVICE_PATH}")
-log("Combo actif : L3 + R3")
+combo_sets = load_combos()
+log(f"Combos actifs codes : {[sorted(c) for c in combo_sets]}")
 
-pressed_left = False
-pressed_right = False
+pressed_by_fd = {dev.fd: set() for dev in devices}
 last_trigger = 0.0
-combo_armed = True
+armed_by_fd = {dev.fd: True for dev in devices}
 
-for event in device.read_loop():
-    if event.type != ecodes.EV_KEY:
-        continue
+while True:
+    readable, _, _ = select.select(devices, [], [])
 
-    code = event.code
-    value = event.value
+    for dev in readable:
+        for event in dev.read():
+            if event.type != ecodes.EV_KEY:
+                continue
 
-    if code in LEFT_STICK_CODES:
-        pressed_left = value != 0
-        log(f"L3 état: {pressed_left} code={code}")
+            if not any(event.code in combo for combo in combo_sets):
+                continue
 
-    elif code in RIGHT_STICK_CODES:
-        pressed_right = value != 0
-        log(f"R3 état: {pressed_right} code={code}")
+            pressed = pressed_by_fd[dev.fd]
 
-    else:
-        continue
+            if event.value != 0:
+                pressed.add(event.code)
+            else:
+                pressed.discard(event.code)
 
-    now = time.time()
+            log(f"{dev.name} fd={dev.fd} pressed={sorted(pressed)}")
 
-    if pressed_left and pressed_right and combo_armed:
-        if now - last_trigger >= COOLDOWN_SECONDS:
-            log("Combo L3+R3 détecté")
-            open_manual()
-            last_trigger = now
-            combo_armed = False
+            now = time.time()
 
-    if not pressed_left or not pressed_right:
-        if not combo_armed:
-            log("Combo L3+R3 réarmé")
-        combo_armed = True
+            active_combo = next((combo for combo in combo_sets if combo.issubset(pressed)), None)
+
+            if active_combo and now - last_trigger >= COOLDOWN_SECONDS:
+                log(f"Combo détecté sur {dev.name} codes={sorted(active_combo)}")
+                open_manual()
+                last_trigger = now
+
+            if not active_combo:
+                armed_by_fd[dev.fd] = True

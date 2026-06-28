@@ -2,21 +2,102 @@
 
 from evdev import InputDevice, ecodes
 from pathlib import Path
+import json
+import os
 import subprocess
 import sys
 import time
-import os
 
-DEVICE_PATH = sys.argv[1] if len(sys.argv) > 1 else "/dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick"
+DETECT = "/home/retropie/Documents/save_retropie/Manuels/scripts/controller-detect.py"
+MAP_FILE = Path("/home/retropie/Documents/save_retropie/Manuels/config/controller-map.json")
+HELP_SCRIPT = "/home/retropie/Documents/save_retropie/Manuels/scripts/show-manual-controls.sh"
+
 LOG = Path("/tmp/retropie-manual-pdf-gamepad.log")
 
 COOLDOWN = 0.18
 last_action = 0.0
 
 
+DEFAULT_MAP = {
+    "quit": ["BTN_A", "BTN_B"],
+    "help": ["BTN_X", "BTN_Y"],
+    "zoom_out": ["BTN_TL"],
+    "zoom_in": ["BTN_TR"],
+    "fit": ["BTN_SELECT", "BTN_START"],
+    "dpad": {
+        "up": ["ABS_HAT0Y", -1],
+        "down": ["ABS_HAT0Y", 1],
+        "left": ["ABS_HAT0X", -1],
+        "right": ["ABS_HAT0X", 1]
+    }
+}
+
+
 def log(msg):
     with LOG.open("a", encoding="utf-8") as f:
         f.write(f"{time.ctime()} | {msg}\n")
+
+
+def autodetect_controller() -> str:
+    try:
+        out = subprocess.check_output(
+            [DETECT, "--first"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if out:
+            return out
+    except Exception:
+        pass
+
+    return "/dev/input/by-id/usb-PowerA_NSW_wired_controller-event-joystick"
+
+
+def code_from_name(name: str) -> int | None:
+    value = getattr(ecodes, name, None)
+
+    if isinstance(value, int):
+        return value
+
+    return None
+
+
+def load_map():
+    data = DEFAULT_MAP.copy()
+
+    if MAP_FILE.is_file():
+        try:
+            raw = json.loads(MAP_FILE.read_text(encoding="utf-8"))
+            controls = raw.get("pdf_controls", {})
+            data.update(controls)
+        except Exception as exc:
+            log(f"Mapping illisible, fallback : {exc}")
+
+    key_map = {}
+
+    for action in ["quit", "help", "zoom_out", "zoom_in", "fit"]:
+        for name in data.get(action, []):
+            code = code_from_name(name)
+            if code is not None:
+                key_map[code] = action
+            else:
+                log(f"Code inconnu : {name}")
+
+    dpad_map = {}
+
+    for action, pair in data.get("dpad", {}).items():
+        if not isinstance(pair, list) or len(pair) != 2:
+            continue
+
+        name, expected = pair
+        code = code_from_name(name)
+
+        if code is not None:
+            dpad_map[(code, expected)] = action
+        else:
+            log(f"Code ABS inconnu : {name}")
+
+    return key_map, dpad_map
 
 
 def xkey(key):
@@ -26,6 +107,20 @@ def xkey(key):
 
     subprocess.Popen(
         ["xdotool", "key", key],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+    )
+
+
+def show_help():
+    env = os.environ.copy()
+    env["DISPLAY"] = ":1"
+    env["XAUTHORITY"] = "/home/retropie/.Xauthority"
+    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{os.getuid()}/bus"
+
+    subprocess.Popen(
+        [HELP_SCRIPT],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env=env,
@@ -46,9 +141,9 @@ def do_action(action):
         xkey("Down")
     elif action == "up":
         xkey("Up")
-    elif action == "page_down":
+    elif action == "right":
         xkey("Next")
-    elif action == "page_up":
+    elif action == "left":
         xkey("Prior")
     elif action == "zoom_in":
         xkey("plus")
@@ -58,7 +153,11 @@ def do_action(action):
         xkey("w")
     elif action == "quit":
         xkey("q")
+    elif action == "help":
+        show_help()
 
+
+DEVICE_PATH = sys.argv[1] if len(sys.argv) > 1 else autodetect_controller()
 
 try:
     dev = InputDevice(DEVICE_PATH)
@@ -66,55 +165,24 @@ except Exception as exc:
     log(f"Impossible d'ouvrir {DEVICE_PATH}: {exc}")
     sys.exit(1)
 
+key_map, dpad_map = load_map()
+
 log(f"Contrôleur PDF démarré sur {DEVICE_PATH}")
+log(f"KEY map : {key_map}")
+log(f"DPAD map : {dpad_map}")
 
 for event in dev.read_loop():
     if event.type == ecodes.EV_KEY:
         if event.value != 1:
             continue
 
-        code = event.code
+        action = key_map.get(event.code)
 
-        # D-Pad sur beaucoup de manettes
-        if code == ecodes.BTN_DPAD_DOWN:
-            do_action("down")
-        elif code == ecodes.BTN_DPAD_UP:
-            do_action("up")
-        elif code == ecodes.BTN_DPAD_RIGHT:
-            do_action("page_down")
-        elif code == ecodes.BTN_DPAD_LEFT:
-            do_action("page_up")
-
-        # Boutons génériques possibles
-        elif code in (ecodes.BTN_SOUTH, ecodes.BTN_EAST):
-            do_action("quit")
-        elif code == ecodes.BTN_TR:
-            do_action("zoom_in")
-        elif code == ecodes.BTN_TL:
-            do_action("zoom_out")
-        elif code in (ecodes.BTN_SELECT, ecodes.BTN_START):
-            do_action("fit")
+        if action:
+            do_action(action)
 
     elif event.type == ecodes.EV_ABS:
-        code = event.code
-        value = event.value
+        action = dpad_map.get((event.code, event.value))
 
-        # Croix directionnelle en ABS_HAT
-        if code == ecodes.ABS_HAT0Y:
-            if value == 1:
-                do_action("down")
-            elif value == -1:
-                do_action("up")
-
-        elif code == ecodes.ABS_HAT0X:
-            if value == 1:
-                do_action("page_down")
-            elif value == -1:
-                do_action("page_up")
-
-        # Stick gauche vertical, fallback
-        elif code == ecodes.ABS_Y:
-            if value > 45000:
-                do_action("down")
-            elif value < 20000:
-                do_action("up")
+        if action:
+            do_action(action)
