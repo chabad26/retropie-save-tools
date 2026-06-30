@@ -11,6 +11,14 @@ manuals:
   sources: localcsv,notipix,archive
   sleep: 4
   quality_min_size: 50M
+  sources_order:
+  - notipix
+  - replacementdocs
+  - archive
+  source_policy:
+    notipix: source prioritaire avec accord explicite
+    replacementdocs: fallback serveur fichiers public
+    archive: fallback final à contacter
 players:
 - lucas
 - nolan

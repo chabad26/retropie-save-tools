@@ -2,29 +2,23 @@
 
 set -Eeuo pipefail
 
-# Dossier contenant les dossiers de jeux PS3.
-# Il peut aussi être fourni en premier argument.
 GAMES_DIR="${1:-/home/retropie/RetroPie/roms/PS3/JEUX}"
-
-# Dossier où seront créés les fichiers .PS3.
-# Il peut être fourni en second argument.
 SHORTCUT_DIR="${2:-/home/retropie/RetroPie/roms/PS3}"
-
-# FORCE=1 permet de remplacer les raccourcis existants.
 FORCE="${FORCE:-0}"
 
 created=0
 skipped=0
 not_found=0
 errors=0
+iso_links=0
 
 echo
 echo "============================================================"
 echo " Génération des raccourcis PS3 pour RetroPie"
 echo "============================================================"
 echo
-echo "Dossiers des jeux : $GAMES_DIR"
-echo "Raccourcis créés : $SHORTCUT_DIR"
+echo "Jeux source       : $GAMES_DIR"
+echo "Raccourcis créés  : $SHORTCUT_DIR"
 echo
 
 if [ ! -d "$GAMES_DIR" ]; then
@@ -34,14 +28,36 @@ fi
 
 mkdir -p "$SHORTCUT_DIR"
 
-# -print0 protège les noms avec espaces, accents, apostrophes,
-# retours à la ligne et autres caractères spéciaux.
+echo "🎮 Création des liens ISO..."
+find "$SHORTCUT_DIR" -maxdepth 1 -type l -iname "*.iso" -delete
+
+while IFS= read -r -d '' iso; do
+    link="$SHORTCUT_DIR/$(basename "$iso")"
+
+    if ln -sf "$iso" "$link"; then
+        echo "✅ ISO : $(basename "$iso")"
+        ((iso_links += 1))
+    else
+        echo "❌ ISO impossible : $iso"
+        ((errors += 1))
+    fi
+done < <(
+    find "$GAMES_DIR" \
+        -maxdepth 1 \
+        -type f \
+        -iname "*.iso" \
+        -print0 |
+    sort -z
+)
+
+echo
+echo "🎮 Création des raccourcis .PS3 depuis dossiers..."
+
 while IFS= read -r -d '' game_dir; do
     game_name="$(basename "$game_dir")"
     shortcut="$SHORTCUT_DIR/$game_name.PS3"
     eboot=""
 
-    # Emplacements les plus fréquents.
     candidates=(
         "$game_dir/PS3_GAME/USRDIR/EBOOT.BIN"
         "$game_dir/USRDIR/EBOOT.BIN"
@@ -55,7 +71,6 @@ while IFS= read -r -d '' game_dir; do
         fi
     done
 
-    # Recherche plus large si la structure est différente.
     if [ -z "$eboot" ]; then
         while IFS= read -r -d '' candidate; do
             eboot="$candidate"
@@ -80,7 +95,6 @@ while IFS= read -r -d '' game_dir; do
         continue
     fi
 
-    # Écriture temporaire puis remplacement atomique.
     temp_file="$shortcut.tmp.$$"
 
     if ! printf '%s\n' "$eboot" > "$temp_file"; then
@@ -97,7 +111,7 @@ while IFS= read -r -d '' game_dir; do
         continue
     fi
 
-    echo "✅ $game_name"
+    echo "✅ Dossier : $game_name"
     echo "   → $eboot"
 
     ((created += 1))
@@ -115,14 +129,15 @@ echo
 echo "============================================================"
 echo " Résultat"
 echo "============================================================"
-echo "Créés             : $created"
+echo "Liens ISO créés   : $iso_links"
+echo "Raccourcis .PS3   : $created"
 echo "Déjà présents     : $skipped"
 echo "EBOOT.BIN absents : $not_found"
 echo "Erreurs           : $errors"
 echo
 
-if [ "$created" -gt 0 ]; then
-    echo "✅ Les raccourcis PS3 ont été générés."
+if [ "$iso_links" -gt 0 ] || [ "$created" -gt 0 ]; then
+    echo "✅ PS3 synchronisée pour RetroPie."
 else
-    echo "ℹ️ Aucun nouveau raccourci n'a été créé."
+    echo "ℹ️ Aucun nouveau raccourci ou lien ISO créé."
 fi

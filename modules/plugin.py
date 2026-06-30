@@ -4,6 +4,34 @@ import sys
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent / "plugins"
 
+REQUIRED_FIELDS = ["id", "name", "description"]
+
+
+def invalid_plugin(plugin_dir, message):
+    return {
+        "id": plugin_dir.name,
+        "name": f"❌ {plugin_dir.name}",
+        "description": message,
+        "version": "",
+        "author": "",
+        "order": 999,
+        "requires": [],
+        "run": None,
+        "status": None,
+        "commands": None,
+        "execute": None,
+        "about": None,
+        "path": str(plugin_dir),
+        "valid": False,
+    }
+
+
+def validate_plugin(plugin):
+    missing = [field for field in REQUIRED_FIELDS if not plugin.get(field)]
+    if missing:
+        return False, f"Champs manquants : {', '.join(missing)}"
+    return True, "OK"
+
 
 def discover_plugins():
     plugins = []
@@ -21,7 +49,6 @@ def discover_plugins():
         if not plugin_file.exists():
             continue
 
-        # Rend le dossier importable comme un package.
         if not init_file.exists():
             init_file.write_text("", encoding="utf-8")
 
@@ -34,30 +61,39 @@ def discover_plugins():
         )
 
         module = importlib.util.module_from_spec(spec)
-        sys.modules[f"{package_name}.plugin"] = module
         sys.modules[package_name] = module
+        sys.modules[f"{package_name}.plugin"] = module
 
         try:
             spec.loader.exec_module(module)
         except Exception as exc:
-            plugins.append({
-                "id": plugin_dir.name,
-                "name": f"❌ {plugin_dir.name}",
-                "description": f"Erreur de chargement : {exc}",
-                "version": "",
-                "author": "",
-                "order": 999,
-                "run": None,
-                "path": str(plugin_dir),
-            })
+            plugins.append(invalid_plugin(plugin_dir, f"Erreur de chargement : {exc}"))
             continue
 
-        if hasattr(module, "PLUGIN"):
-            plugin = dict(module.PLUGIN)
-            plugin["run"] = getattr(module, "run", None)
-            plugin["status"] = getattr(module, "status", None)
-            plugin["path"] = str(plugin_dir)
-            plugin["requires"] = plugin.get("requires", [])
-            plugins.append(plugin)
+        if not hasattr(module, "PLUGIN"):
+            plugins.append(invalid_plugin(plugin_dir, "Variable PLUGIN absente"))
+            continue
+
+        plugin = dict(module.PLUGIN)
+        valid, message = validate_plugin(plugin)
+
+        plugin.setdefault("version", "")
+        plugin.setdefault("author", "")
+        plugin.setdefault("order", 999)
+        plugin.setdefault("requires", [])
+
+        plugin["run"] = getattr(module, "run", None)
+        plugin["status"] = getattr(module, "status", None)
+        plugin["commands"] = getattr(module, "commands", None)
+        plugin["execute"] = getattr(module, "execute", None)
+        plugin["about"] = getattr(module, "about", None)
+        plugin["path"] = str(plugin_dir)
+        plugin["valid"] = valid
+
+        if not valid:
+            plugin["name"] = f"❌ {plugin_dir.name}"
+            plugin["description"] = message
+
+        plugins.append(plugin)
 
     return sorted(plugins, key=lambda p: p.get("order", 999))

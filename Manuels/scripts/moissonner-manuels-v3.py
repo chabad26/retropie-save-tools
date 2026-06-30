@@ -12,6 +12,7 @@ import importlib.util
 import re
 import shutil
 import time
+from manual_sources import replacementdocs
 import xml.etree.ElementTree as ET
 
 
@@ -506,7 +507,7 @@ def build_replacementdocs_index(system: str, max_pages: int, sleep: float, force
     platform_id = platform_override or replacementdocs_platform_id(system)
 
     if not platform_id:
-        print(f"  ⚠️ ReplacementDocs : plateforme introuvable pour {system}")
+        
         return []
 
     print(f"📚 Construction index ReplacementDocs pour {system} / list.{platform_id}...")
@@ -730,6 +731,16 @@ def download_any_pdf(candidate: dict, destination: Path, sleep: float) -> bool:
             return False
 
         destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        return True
+
+    if source == "replacementdocs":
+        try:
+            data = replacementdocs.download(candidate)
+        except Exception as error:
+            print(f"  ❌ ReplacementDocs download impossible : {error}")
+            return False
+
         destination.write_bytes(data)
         return True
 
@@ -1191,8 +1202,8 @@ def main():
     parser.add_argument("--replacementdocs-platform-id", default="", help="Force un ID ReplacementDocs, ex: 16 pour SNES")
     parser.add_argument(
         "--sources",
-        default="archive,replacementdocs",
-        help="Sources : localcsv,notipix,archive,replacementdocs. ReplacementDocs est expérimental et peut être indisponible.",
+        default="notipix,replacementdocs,archive",
+        help="Sources : localcsv,notipix,replacementdocs,archive. Ordre conseillé : notipix,replacementdocs,archive.",
     )
 
     args = parser.parse_args()
@@ -1301,14 +1312,7 @@ def main():
                 )
 
             elif source == "replacementdocs":
-                candidate = find_replacementdocs(
-                    search_name,
-                    args.system,
-                    max_pages=args.replacementdocs_pages,
-                    sleep=args.sleep,
-                    force=args.refresh_replacementdocs,
-                    platform_id=args.replacementdocs_platform_id or None,
-                )
+                candidate = replacementdocs.find(search_name, args.system)
 
             if candidate:
                 print(
